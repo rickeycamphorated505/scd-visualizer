@@ -101,6 +101,8 @@ function AppInner(): JSX.Element {
     };
   }, [activeModel, visibleBase]);
 
+  const stableIssues = useMemo(() => vstate.issues, [vstate.issues]);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const isCmdK = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k';
@@ -412,7 +414,7 @@ function AppInner(): JSX.Element {
                 <SubstationTree
                   substations={activeModel?.substations ?? []}
                   ieds={activeModel?.ieds ?? []}
-                  issues={vstate.issues}
+                  issues={stableIssues}
                   selectedIedName={selectedIedName}
                   onSelectIed={selectIed}
                 />
