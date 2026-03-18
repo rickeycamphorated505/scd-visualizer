@@ -199,6 +199,8 @@ export default function StatisticsWorkspace({ model }: StatisticsWorkspaceProps)
             <StatCard label="Total signals/refs" value={signals.totalSignalsOrRefs} />
             <StatCard label="GOOSE signals" value={signals.gooseSignals} />
             <StatCard label="SMV signals" value={signals.smvSignals} />
+            <StatCard label="Data objects (types)" value={signals.dataObjects} />
+            <StatCard label="Data attributes (types)" value={signals.dataAttributes} />
           </div>
         </Section>
 
