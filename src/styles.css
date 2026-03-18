@@ -2554,3 +2554,14 @@ summary:focus-visible {
 .vm-na {
   color: var(--muted);
 }
+
+.vm-placeholder {
+  min-width: 40px;
+}
+
+.fcda-expand > summary { list-style: none; cursor: pointer; }
+.fcda-expand > summary::-webkit-details-marker { display: none; }
+.fcda-expand[open] > summary { border-bottom: 1px solid var(--line); }
+.fcda-da-table { width: 100%; font-size: 10px; border-collapse: collapse; margin: 2px 0 4px 16px; }
+.fcda-da-table th, .fcda-da-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid var(--line); }
+.fcda-da-table th { color: var(--text-muted); font-weight: 500; }

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './styles.css';
 import { parseSclDocument } from './parser/sclParser';
+import type { ParseResult } from './parser/sclParser';
+import { deserializeModel } from './workers/parseWorker';
 import TopBar from './components/TopBar';
 import { Button, Chip, EmptyState } from './components/ui';
 import SubstationTree from './components/SubstationTree';
@@ -13,6 +15,8 @@ import StatisticsWorkspace from './components/StatisticsWorkspace';
 import ChangesPanel from './components/ChangesPanel';
 import NetworkVisualizerPanel from './components/NetworkVisualizerPanel';
 import ValidationMatrix from './components/ValidationMatrix';
+import AddressesTable from './components/AddressesTable';
+import SubscriptionMatrix from './components/SubscriptionMatrix';
 import ThreePaneLayout from './components/ThreePaneLayout';
 import { changesCsv, detailedFlowsCsv, gooseMatrixCsv, protocolSummaryCsv, validationCsv } from './utils/exportCsv';
 import { downloadExcelIp, type ExportSheetsOption } from './utils/exportExcel';
@@ -37,10 +41,12 @@ export default function App(): JSX.Element {
 }
 
 function AppInner(): JSX.Element {
-  const [appMode, setAppMode] = useState<'visualizer' | 'network' | 'issues' | 'compare' | 'statistics'>('visualizer');
+  const [appMode, setAppMode] = useState<'visualizer' | 'network' | 'issues' | 'compare' | 'statistics' | 'addresses'>('visualizer');
+  const [graphSubView, setGraphSubView] = useState<'visualizer' | 'subscriptions'>('visualizer');
   const [commandOpen, setCommandOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [fileSizeWarning, setFileSizeWarning] = useState<{ file: File; callback: (xml: string, name: string) => void; mb: string } | null>(null);
+  const [loadingMessage, setLoadingMessage] = useState('Parsing file…');
+  const [fileSizeWarning, setFileSizeWarning] = useState<{ file: File; onResult: (result: ParseResult, name: string) => void; mb: string } | null>(null);
   const { toasts, showToast, dismiss } = useToast();
 
   const [compareVariant, setCompareVariant] = useState<'single' | 'compare'>('single');
@@ -158,56 +164,78 @@ function AppInner(): JSX.Element {
   async function loadExample(path: string): Promise<void> {
     const res = await fetch(path);
     const text = await res.text();
-    parseAndSetModel(text, path.split('/').pop() || path);
-  }
-
-  function parseAndSetModel(xml: string, name: string): void {
-    const result = parseSclDocument(xml);
+    const result = parseSclDocument(text);
     setAppMode('visualizer');
-    applyParsedMain(result, name);
-  }
-
-  function parseAndSetBaseline(xml: string, name: string): void {
-    const result = parseSclDocument(xml);
-    applyParsedBaseline(result, name, () => {
-      setSelectedChangeId(null);
-    });
-  }
-
-  function parseAndSetNew(xml: string, name: string): void {
-    const result = parseSclDocument(xml);
-    applyParsedNew(result, name, () => {
-      setSelectedChangeId(null);
-    });
+    applyParsedMain(result, path.split('/').pop() || path);
   }
 
   const FILE_SIZE_WARN_BYTES = 50 * 1024 * 1024; // 50 MB
 
-  function doReadFile(file: File, callback: (xml: string, name: string) => void): void {
+  function doReadFile(file: File, onResult: (result: ParseResult, name: string) => void): void {
     setLoading(true);
+    setLoadingMessage('Reading file…');
+
     const reader = new FileReader();
     reader.onload = () => {
-      // setTimeout(0) lets React render the loading overlay before the
-      // synchronous parse blocks the main thread.
-      window.setTimeout(() => {
-        try {
-          callback(String(reader.result), file.name);
-        } finally {
+      const xml = String(reader.result);
+      setLoadingMessage('Parsing…');
+
+      const worker = new Worker(new URL('./workers/parseWorker.ts', import.meta.url), { type: 'module' });
+
+      worker.onmessage = (event: MessageEvent) => {
+        const msg = event.data as
+          | { type: 'progress'; ieds: number }
+          | { type: 'result'; result: { model: Parameters<typeof deserializeModel>[0]; name: string } }
+          | { type: 'error'; message: string };
+
+        if (msg.type === 'progress') {
+          setLoadingMessage(`Parsing… ${msg.ieds} IEDs found`);
+          return;
+        }
+
+        if (msg.type === 'result') {
+          worker.terminate();
+          try {
+            const model = deserializeModel(msg.result.model);
+            onResult({ model }, msg.result.name);
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : 'Deserialize failed';
+            showToast(errMsg);
+          } finally {
+            setLoading(false);
+          }
+          return;
+        }
+
+        if (msg.type === 'error') {
+          worker.terminate();
+          showToast(`Parse error: ${msg.message}`);
           setLoading(false);
         }
-      }, 0);
+      };
+
+      worker.onerror = (err) => {
+        worker.terminate();
+        showToast(`Worker error: ${err.message}`);
+        setLoading(false);
+      };
+
+      worker.postMessage({ type: 'parse', xml, name: file.name });
     };
-    reader.onerror = () => setLoading(false);
+    reader.onerror = () => {
+      showToast('Failed to read file');
+      setLoading(false);
+    };
     reader.readAsText(file);
   }
 
-  function readFile(file: File, callback: (xml: string, name: string) => void): void {
+  function readFile(file: File, onResult: (result: ParseResult, name: string) => void): void {
     if (file.size > FILE_SIZE_WARN_BYTES) {
       const mb = (file.size / (1024 * 1024)).toFixed(1);
-      setFileSizeWarning({ file, callback, mb });
+      setFileSizeWarning({ file, onResult, mb });
       return;
     }
-    doReadFile(file, callback);
+    doReadFile(file, onResult);
   }
 
   function exportBlob(content: string, file: string, mime = 'text/plain;charset=utf-8;'): void {
@@ -294,17 +322,23 @@ function AppInner(): JSX.Element {
     dispatch({ type: 'request-fit' });
   }
 
+  function filterEdgesByPair(publisherIed: string, subscriberIed: string) {
+    dispatch({ type: 'set-ied-filter', payload: [publisherIed, subscriberIed] });
+    setGraphSubView('visualizer');
+  }
+
   const centerViewItems: Array<{ id: typeof appMode; label: string; icon: string }> = [
     { id: 'visualizer', label: 'Graph', icon: '⬡' },
     { id: 'issues', label: 'Validation', icon: '✓' },
     { id: 'compare', label: 'Compare', icon: '⟷' },
     { id: 'network', label: 'Network', icon: '⋯' },
     { id: 'statistics', label: 'Statistics', icon: '≡' },
+    { id: 'addresses', label: 'Addresses', icon: '⊞' },
   ];
 
   // canvas tabs keep sidebars; report tabs auto-collapse them
   // Network has its own internal ThreePaneLayout so outer sidebars waste space
-  const isReportTab = appMode === 'issues' || appMode === 'compare' || appMode === 'statistics' || appMode === 'network';
+  const isReportTab = appMode === 'issues' || appMode === 'compare' || appMode === 'statistics' || appMode === 'network' || appMode === 'addresses';
 
   return (
     <div className="app-shell-v2">
@@ -316,7 +350,10 @@ function AppInner(): JSX.Element {
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) {
-            readFile(file, parseAndSetModel);
+            readFile(file, (result, name) => {
+              setAppMode('visualizer');
+              applyParsedMain(result, name);
+            });
           }
         }}
       />
@@ -328,7 +365,7 @@ function AppInner(): JSX.Element {
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) {
-            readFile(file, parseAndSetBaseline);
+            readFile(file, (result, name) => applyParsedBaseline(result, name, () => setSelectedChangeId(null)));
           }
         }}
       />
@@ -340,7 +377,7 @@ function AppInner(): JSX.Element {
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) {
-            readFile(file, parseAndSetNew);
+            readFile(file, (result, name) => applyParsedNew(result, name, () => setSelectedChangeId(null)));
           }
         }}
       />
@@ -439,124 +476,144 @@ function AppInner(): JSX.Element {
                   {/* Graph view */}
                   {appMode === 'visualizer' ? (
                     <>
-                      <section className="filter-strip">
-                        <details className="ied-filter-dropdown" data-state={ui.iedFilter === 'all' ? 'all' : 'some'}>
-                          <summary className="ied-filter-summary" title="Filter by IED">
-                            {ui.iedFilter === 'all' ? 'IEDs: All' : `IEDs: ${ui.iedFilter.length} selected`}
-                          </summary>
-                          <div className="ied-filter-list" role="group" aria-label="Select IEDs">
-                            <label className="ied-filter-option">
-                              <input
-                                type="checkbox"
-                                checked={ui.iedFilter === 'all'}
-                                onChange={(e) => {
-                                  dispatch({ type: 'set-ied-filter', payload: e.target.checked ? 'all' : [] });
-                                }}
-                              />
-                              <span>All IEDs</span>
-                            </label>
-                            {(activeModel?.ieds ?? []).map((ied) => {
-                              const isChecked = ui.iedFilter === 'all' || ui.iedFilter.includes(ied.name);
-                              return (
-                                <label key={ied.name} className="ied-filter-option">
+                      <div className="validation-view-tabs" style={{ display: 'flex', gap: 4, padding: '4px 8px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
+                        <button
+                          className={`center-view-btn ${graphSubView === 'visualizer' ? 'active' : ''}`}
+                          onClick={() => setGraphSubView('visualizer')}
+                        >Flow graph</button>
+                        <button
+                          className={`center-view-btn ${graphSubView === 'subscriptions' ? 'active' : ''}`}
+                          onClick={() => setGraphSubView('subscriptions')}
+                        >Subscriptions</button>
+                      </div>
+                      {graphSubView === 'visualizer' ? (
+                        <>
+                          <section className="filter-strip">
+                            <details className="ied-filter-dropdown" data-state={ui.iedFilter === 'all' ? 'all' : 'some'}>
+                              <summary className="ied-filter-summary" title="Filter by IED">
+                                {ui.iedFilter === 'all' ? 'IEDs: All' : `IEDs: ${ui.iedFilter.length} selected`}
+                              </summary>
+                              <div className="ied-filter-list" role="group" aria-label="Select IEDs">
+                                <label className="ied-filter-option">
                                   <input
                                     type="checkbox"
-                                    checked={isChecked}
+                                    checked={ui.iedFilter === 'all'}
                                     onChange={(e) => {
-                                      if (e.target.checked) {
-                                        const next = ui.iedFilter === 'all'
-                                          ? (activeModel?.ieds ?? []).map((i) => i.name)
-                                          : [...ui.iedFilter, ied.name];
-                                        dispatch({ type: 'set-ied-filter', payload: next });
-                                      } else {
-                                        const next = ui.iedFilter === 'all'
-                                          ? (activeModel?.ieds ?? []).filter((i) => i.name !== ied.name).map((i) => i.name)
-                                          : ui.iedFilter.filter((n) => n !== ied.name);
-                                        dispatch({ type: 'set-ied-filter', payload: next });
-                                      }
+                                      dispatch({ type: 'set-ied-filter', payload: e.target.checked ? 'all' : [] });
                                     }}
                                   />
-                                  <span>{ied.name}</span>
+                                  <span>All IEDs</span>
                                 </label>
-                              );
-                            })}
-                          </div>
-                        </details>
-                        <div className="chip-group">
-                          <Chip active={ui.protocolFilter.GOOSE} onClick={() => dispatch({ type: 'toggle-protocol', payload: 'GOOSE' })}>GOOSE</Chip>
-                          <Chip active={ui.protocolFilter.SV} onClick={() => dispatch({ type: 'toggle-protocol', payload: 'SV' })}>SV</Chip>
-                          <Chip active={ui.protocolFilter.REPORT} onClick={() => dispatch({ type: 'toggle-protocol', payload: 'REPORT' })}>REPORT</Chip>
-                        </div>
-                        <input
-                          className="input"
-                          value={ui.searchQuery}
-                          placeholder="Filter IED/LN/DataSet/Control..."
-                          onChange={(e) => dispatch({ type: 'set-search', payload: e.target.value })}
-                        />
-                        <select
-                          className="input"
-                          value={ui.directionFilter}
-                          onChange={(e) => dispatch({ type: 'set-direction', payload: e.target.value as typeof ui.directionFilter })}
-                        >
-                          <option value="both">Dir: both</option>
-                          <option value="incoming">Dir: in</option>
-                          <option value="outgoing">Dir: out</option>
-                        </select>
-                        <select
-                          className="input"
-                          value={ui.resolutionFilter}
-                          onChange={(e) => dispatch({ type: 'set-resolution', payload: e.target.value as typeof ui.resolutionFilter })}
-                        >
-                          <option value="all">Res: all</option>
-                          <option value="resolved">Res: resolved</option>
-                          <option value="unresolved">Res: unresolved</option>
-                        </select>
-                        <select
-                          className="input"
-                          value={String(ui.neighborDepth)}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            dispatch({ type: 'set-neighbor-depth', payload: value === 'all' ? 'all' : Number(value) as 1 | 2 });
-                          }}
-                        >
-                          <option value="1">Depth: 1</option>
-                          <option value="2">Depth: 2</option>
-                          <option value="all">Depth: all</option>
-                        </select>
-                        <label className="toggle-check">
-                          <input
-                            type="checkbox"
-                            checked={ui.hideIsolated}
-                            onChange={(e) => dispatch({ type: 'set-hide-isolated', payload: e.target.checked })}
+                                {(activeModel?.ieds ?? []).map((ied) => {
+                                  const isChecked = ui.iedFilter === 'all' || ui.iedFilter.includes(ied.name);
+                                  return (
+                                    <label key={ied.name} className="ied-filter-option">
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={(e) => {
+                                          if (e.target.checked) {
+                                            const next = ui.iedFilter === 'all'
+                                              ? (activeModel?.ieds ?? []).map((i) => i.name)
+                                              : [...ui.iedFilter, ied.name];
+                                            dispatch({ type: 'set-ied-filter', payload: next });
+                                          } else {
+                                            const next = ui.iedFilter === 'all'
+                                              ? (activeModel?.ieds ?? []).filter((i) => i.name !== ied.name).map((i) => i.name)
+                                              : ui.iedFilter.filter((n) => n !== ied.name);
+                                            dispatch({ type: 'set-ied-filter', payload: next });
+                                          }
+                                        }}
+                                      />
+                                      <span>{ied.name}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </details>
+                            <div className="chip-group">
+                              <Chip active={ui.protocolFilter.GOOSE} onClick={() => dispatch({ type: 'toggle-protocol', payload: 'GOOSE' })}>GOOSE</Chip>
+                              <Chip active={ui.protocolFilter.SV} onClick={() => dispatch({ type: 'toggle-protocol', payload: 'SV' })}>SV</Chip>
+                              <Chip active={ui.protocolFilter.REPORT} onClick={() => dispatch({ type: 'toggle-protocol', payload: 'REPORT' })}>REPORT</Chip>
+                            </div>
+                            <input
+                              className="input"
+                              value={ui.searchQuery}
+                              placeholder="Filter IED/LN/DataSet/Control..."
+                              onChange={(e) => dispatch({ type: 'set-search', payload: e.target.value })}
+                            />
+                            <select
+                              className="input"
+                              value={ui.directionFilter}
+                              onChange={(e) => dispatch({ type: 'set-direction', payload: e.target.value as typeof ui.directionFilter })}
+                            >
+                              <option value="both">Dir: both</option>
+                              <option value="incoming">Dir: in</option>
+                              <option value="outgoing">Dir: out</option>
+                            </select>
+                            <select
+                              className="input"
+                              value={ui.resolutionFilter}
+                              onChange={(e) => dispatch({ type: 'set-resolution', payload: e.target.value as typeof ui.resolutionFilter })}
+                            >
+                              <option value="all">Res: all</option>
+                              <option value="resolved">Res: resolved</option>
+                              <option value="unresolved">Res: unresolved</option>
+                            </select>
+                            <select
+                              className="input"
+                              value={String(ui.neighborDepth)}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                dispatch({ type: 'set-neighbor-depth', payload: value === 'all' ? 'all' : Number(value) as 1 | 2 });
+                              }}
+                            >
+                              <option value="1">Depth: 1</option>
+                              <option value="2">Depth: 2</option>
+                              <option value="all">Depth: all</option>
+                            </select>
+                            <label className="toggle-check">
+                              <input
+                                type="checkbox"
+                                checked={ui.hideIsolated}
+                                onChange={(e) => dispatch({ type: 'set-hide-isolated', payload: e.target.checked })}
+                              />
+                              Hide isolated
+                            </label>
+                          </section>
+                          <GraphCanvas
+                            ieds={visible.visibleIeds}
+                            edges={visible.visibleEdges}
+                            focusIedId={ui.focusIedId}
+                            selectedEntity={ui.selectedEntity}
+                            fitToken={ui.fitToken}
+                            layoutCacheKey={fileName || 'single'}
+                            filtersSnapshot={{
+                              appMode,
+                              protocolFilter: ui.protocolFilter,
+                              directionFilter: ui.directionFilter,
+                              resolutionFilter: ui.resolutionFilter,
+                              neighborDepth: ui.neighborDepth,
+                              hideIsolated: ui.hideIsolated,
+                              searchQuery: ui.searchQuery,
+                            }}
+                            onSelectNode={(iedName) => {
+                              dispatch({ type: 'set-focus', payload: iedName });
+                              dispatch({ type: 'set-selected', payload: { type: 'ied', id: `ied:${iedName}` } });
+                            }}
+                            onSelectEdge={(edge) => {
+                              dispatch({ type: 'set-selected', payload: { type: 'edge', id: edge.key } });
+                              dispatch({ type: 'set-focus', payload: edge.publisherIed });
+                            }}
                           />
-                          Hide isolated
-                        </label>
-                      </section>
-                      <GraphCanvas
-                        ieds={visible.visibleIeds}
-                        edges={visible.visibleEdges}
-                        focusIedId={ui.focusIedId}
-                        selectedEntity={ui.selectedEntity}
-                        fitToken={ui.fitToken}
-                        layoutCacheKey={fileName || 'single'}
-                        filtersSnapshot={{
-                          appMode,
-                          protocolFilter: ui.protocolFilter,
-                          directionFilter: ui.directionFilter,
-                          resolutionFilter: ui.resolutionFilter,
-                          neighborDepth: ui.neighborDepth,
-                          hideIsolated: ui.hideIsolated,
-                          searchQuery: ui.searchQuery,
-                        }}
-                        onSelectNode={(iedName) => {
-                          dispatch({ type: 'set-focus', payload: iedName });
-                          dispatch({ type: 'set-selected', payload: { type: 'ied', id: `ied:${iedName}` } });
-                        }}
-                        onSelectEdge={(edge) => {
-                          dispatch({ type: 'set-selected', payload: { type: 'edge', id: edge.key } });
-                          dispatch({ type: 'set-focus', payload: edge.publisherIed });
-                        }}
-                      />
+                        </>
+                      ) : (
+                        <SubscriptionMatrix
+                          edges={activeModel?.edges ?? []}
+                          ieds={activeModel?.ieds ?? []}
+                          onFilterEdges={filterEdgesByPair}
+                        />
+                      )}
                     </>
                   ) : null}
 
@@ -607,6 +664,7 @@ function AppInner(): JSX.Element {
                           onExportJson={() => exportBlob(JSON.stringify(vstate.issues, null, 2), 'validation-report.json', 'application/json')}
                           onExportCsv={() => exportBlob(validationCsv(vstate.issues), 'validation-report.csv', 'text/csv;charset=utf-8;')}
                           onExportLandsnetJson={exportLandsnetJson}
+                          onShowToast={showToast}
                         />
                       )}
                     </div>
@@ -660,9 +718,16 @@ function AppInner(): JSX.Element {
                   {appMode === 'statistics' ? (
                     <StatisticsWorkspace model={activeModel ?? undefined} />
                   ) : null}
+
+                  {/* Addresses view */}
+                  {appMode === 'addresses' && activeModel ? (
+                    <AddressesTable model={activeModel} />
+                  ) : appMode === 'addresses' ? (
+                    <div style={{ padding: 24 }}><p className="hint">Load an SCD file to view addresses.</p></div>
+                  ) : null}
                 </div>
               )}
-              right={<InspectorPanel model={activeModel} baselineModel={appMode === 'compare' ? baselineModel : undefined} selectedEntity={ui.selectedEntity} selectedChange={appMode === 'compare' ? selectedChange : undefined} />}
+              right={<InspectorPanel model={activeModel} baselineModel={appMode === 'compare' ? baselineModel : undefined} selectedEntity={ui.selectedEntity} selectedChange={appMode === 'compare' ? selectedChange : undefined} onShowToast={showToast} />}
             />
           </div>
         </div>
@@ -687,9 +752,9 @@ function AppInner(): JSX.Element {
           <button
             className="btn btn-primary"
             onClick={() => {
-              const { file, callback } = fileSizeWarning;
+              const { file, onResult } = fileSizeWarning;
               setFileSizeWarning(null);
-              doReadFile(file, callback);
+              doReadFile(file, onResult);
             }}
           >
             Load anyway
@@ -707,7 +772,7 @@ function AppInner(): JSX.Element {
         <div className="loading-overlay" role="status" aria-label="Parsing file">
           <div className="loading-card">
             <div className="loading-spinner" aria-hidden="true" />
-            <p>Parsing file…</p>
+            <p>{loadingMessage}</p>
           </div>
         </div>
       )}

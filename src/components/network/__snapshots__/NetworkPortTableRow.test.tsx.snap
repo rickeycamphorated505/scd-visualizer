@@ -1,0 +1,99 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`NetworkPortTableRow > renders row snapshot 1`] = `
+<button
+  class="network-row active"
+>
+  <span>
+    <strong>
+      IED_A
+    </strong>
+    <small>
+      P1
+    </small>
+  </span>
+  <span>
+    <b
+      class="badge neutral"
+    >
+      F
+    </b>
+  </span>
+  <span>
+    <strong
+      class="truncate"
+      title="Bay_A"
+    >
+      Bay_A
+    </strong>
+    <small
+      class="truncate"
+      title="LD0"
+    >
+      LD0
+    </small>
+  </span>
+  <span
+    class="metric-cell"
+  >
+    <b
+      class="badge"
+    >
+      o:
+      3
+    </b>
+    <b
+      class="badge"
+    >
+      i:
+      1
+    </b>
+  </span>
+  <span
+    class="metric-cell"
+  >
+    <b
+      class="badge"
+    >
+      o:
+      2
+    </b>
+    <b
+      class="badge"
+    >
+      i:
+      0
+    </b>
+  </span>
+  <span
+    class="metric-cell"
+  >
+    <b
+      class="badge"
+    >
+      o:
+      1
+    </b>
+    <b
+      class="badge"
+    >
+      i:
+      4
+    </b>
+  </span>
+  <span>
+    <b
+      class="badge danger"
+    >
+      2
+    </b>
+  </span>
+  <span>
+    <b
+      class="badge health-unresolved"
+    >
+      !
+    </b>
+  </span>
+</button>
+`;

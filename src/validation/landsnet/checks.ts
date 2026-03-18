@@ -1,0 +1,928 @@
+import type { SclModel } from '../../model/types';
+import type { ValidationIssue } from '../types';
+import { buildIssueId } from '../utils';
+import type { LandsnetCheckSummary, LandsnetDictionaries } from './types';
+
+export const enum CheckCode {
+  LNET_001 = 'LNET_001',
+  LNET_002 = 'LNET_002',
+  LNET_003 = 'LNET_003',
+  LNET_004 = 'LNET_004',
+  LNET_005 = 'LNET_005',
+  LNET_006 = 'LNET_006',
+  LNET_007 = 'LNET_007',
+  LNET_008 = 'LNET_008',
+  LNET_009 = 'LNET_009',
+  LNET_010 = 'LNET_010',
+  LNET_011 = 'LNET_011',
+  LNET_012 = 'LNET_012',
+  LNET_013 = 'LNET_013',
+  LNET_014 = 'LNET_014',
+  LNET_015 = 'LNET_015',
+  LNET_016 = 'LNET_016',
+  LNET_017 = 'LNET_017',
+  LNET_018 = 'LNET_018',
+  IEC_001 = 'IEC_001',
+  IEC_002 = 'IEC_002',
+  IEC_003 = 'IEC_003',
+  IEC_004 = 'IEC_004',
+  IEC_005 = 'IEC_005',
+  IEC_006 = 'IEC_006',
+  IEC_007 = 'IEC_007',
+  IEC_008 = 'IEC_008',
+  IEC_009 = 'IEC_009',
+}
+
+interface CheckInfo {
+  id: number;
+  code: CheckCode;
+  title: string;
+}
+
+interface CapRecord {
+  subNetwork: string;
+  iedName: string;
+  apName: string;
+  ip?: string;
+  netmask?: string;
+  gateway?: string;
+}
+
+const CHECKS: CheckInfo[] = [
+  { id: 1, code: CheckCode.LNET_001, title: 'No duplicate IED names' },
+  { id: 2, code: CheckCode.LNET_002, title: 'No duplicate IP addresses in each subnet' },
+  { id: 3, code: CheckCode.LNET_003, title: 'Consistent 3rd IP octet per station/subnetwork (except 10.30.200.*)' },
+  { id: 4, code: CheckCode.LNET_004, title: '192.168.* uses mask 255.255.255.0 and gateway 0.0.0.0' },
+  { id: 5, code: CheckCode.LNET_005, title: '10.30.* uses mask 255.255.255.0 and gateway 0.0.0.0' },
+  { id: 6, code: CheckCode.LNET_006, title: '172.25.* uses mask 255.255.255.0 and gateway *.254' },
+  { id: 7, code: CheckCode.LNET_007, title: 'All MMS reports have indexed=true' },
+  { id: 8, code: CheckCode.LNET_008, title: 'GOOSE naming convention for control block and dataset' },
+  { id: 9, code: CheckCode.LNET_009, title: 'No duplicate GOOSE MAC or APPID' },
+  { id: 10, code: CheckCode.LNET_010, title: 'GOOSE MAC station byte matches IP 3rd octet' },
+  { id: 11, code: CheckCode.LNET_011, title: 'GOOSE P-profile APPID/VLAN/MinTime/MaxTime rule' },
+  { id: 12, code: CheckCode.LNET_012, title: 'GOOSE non-P profile APPID/VLAN/MinTime/MaxTime rule' },
+  { id: 13, code: CheckCode.LNET_013, title: 'IED EW0** includes gcPtrp*, gcPev*, gcInd*' },
+  { id: 14, code: CheckCode.LNET_014, title: 'IED EW8** includes gcPtrp*, gcInd*' },
+  { id: 15, code: CheckCode.LNET_015, title: 'No duplicate SV smvID, MAC, APPID' },
+  { id: 16, code: CheckCode.LNET_016, title: 'All SV APPID starts with 4' },
+  { id: 17, code: CheckCode.LNET_017, title: 'SV MAC station byte matches IP 3rd octet' },
+  { id: 18, code: CheckCode.LNET_018, title: 'SV APPID/VLAN priority profile rule' },
+  { id: 19, code: CheckCode.IEC_001, title: 'GOOSE subscription completeness' },
+  { id: 20, code: CheckCode.IEC_002, title: 'SV subscription completeness' },
+  { id: 21, code: CheckCode.IEC_003, title: 'ExtRef fully resolved' },
+  { id: 22, code: CheckCode.IEC_004, title: 'IED naming convention' },
+  { id: 23, code: CheckCode.IEC_005, title: 'IED placed in substation hierarchy' },
+  { id: 24, code: CheckCode.IEC_006, title: 'DataTypeTemplates completeness' },
+  { id: 25, code: CheckCode.IEC_007, title: 'GOOSE/SV dataset not empty' },
+  { id: 26, code: CheckCode.IEC_008, title: 'confRev consistency' },
+  { id: 27, code: CheckCode.IEC_009, title: 'EW8** IEDs must have SV controls' },
+];
+
+export function runLandsnetChecks(
+  model: SclModel,
+  dictionaries: LandsnetDictionaries,
+): { issues: ValidationIssue[]; checks: LandsnetCheckSummary[] } {
+  const issues: ValidationIssue[] = [];
+  const issueCountByCheck = new Map<number, number>();
+
+  const capRecords = flattenCaps(model);
+  const capIndex = new Map(capRecords.map((cap) => [`${cap.iedName}:${cap.apName}`, cap]));
+
+  const addIssue = (params: {
+    checkId: number;
+    codeSuffix: string;
+    message: string;
+    path: string;
+    protocol?: ValidationIssue['protocol'];
+    context?: ValidationIssue['context'];
+    entityRef?: ValidationIssue['entityRef'];
+  }): void => {
+    const baseCode = checkCode(params.checkId);
+    const code = `${baseCode}_${params.codeSuffix}`;
+    issues.push({
+      id: buildIssueId(code, `${params.path}:${params.message}`),
+      severity: 'error',
+      category: 'semantic',
+      code,
+      message: params.message,
+      path: params.path,
+      protocol: params.protocol || 'Generic',
+      context: params.context || {},
+      entityRef: params.entityRef || { type: 'Unknown', id: code },
+      resolved: false,
+      fixHint: `Check Landsnet compliance rule #${params.checkId}.`,
+      quickFix: `Check Landsnet compliance rule #${params.checkId}.`,
+    });
+    issueCountByCheck.set(params.checkId, (issueCountByCheck.get(params.checkId) || 0) + 1);
+  };
+
+  // #1 duplicate IED names
+  {
+    const byName = new Map<string, number>();
+    for (const ied of model.ieds) {
+      byName.set(ied.name, (byName.get(ied.name) || 0) + 1);
+    }
+    for (const [name, count] of byName.entries()) {
+      if (count <= 1) {
+        continue;
+      }
+      addIssue({
+        checkId: 1,
+        codeSuffix: 'DUPLICATE_IED',
+        message: `IED '${name}' appears ${count} times.`,
+        path: `/SCL/IED[@name='${name}']`,
+        context: { iedName: name },
+        entityRef: { type: 'IED', id: `ied:${name}`, iedName: name },
+      });
+    }
+  }
+
+  // #2 duplicate IP in each subnet
+  {
+    const bySubnet = new Map<string, Map<string, CapRecord[]>>();
+    for (const cap of capRecords) {
+      if (!cap.ip) {
+        continue;
+      }
+      if (!bySubnet.has(cap.subNetwork)) {
+        bySubnet.set(cap.subNetwork, new Map());
+      }
+      const byIp = bySubnet.get(cap.subNetwork)!;
+      if (!byIp.has(cap.ip)) {
+        byIp.set(cap.ip, []);
+      }
+      byIp.get(cap.ip)!.push(cap);
+    }
+
+    for (const [subnet, ipMap] of bySubnet.entries()) {
+      for (const [ip, caps] of ipMap.entries()) {
+        if (caps.length <= 1) {
+          continue;
+        }
+        addIssue({
+          checkId: 2,
+          codeSuffix: 'DUPLICATE_IP',
+          message: `Duplicate IP '${ip}' found ${caps.length} times in SubNetwork '${subnet}'.`,
+          path: `/SCL/Communication/SubNetwork[@name='${subnet}']`,
+          context: { ip },
+          entityRef: { type: 'Communication', id: `subnet:${subnet}` },
+        });
+      }
+    }
+  }
+
+  // #3 third octet consistency per station/subnetwork
+  {
+    const stationMap = buildIedStationMap(model);
+    const groupToOctets = new Map<string, Set<number>>();
+
+    for (const cap of capRecords) {
+      if (!cap.ip || cap.ip.startsWith('10.30.200.')) {
+        continue;
+      }
+      const octets = parseIpv4(cap.ip);
+      if (!octets) {
+        continue;
+      }
+      const station = stationMap.get(cap.iedName) || cap.subNetwork;
+      if (!groupToOctets.has(station)) {
+        groupToOctets.set(station, new Set());
+      }
+      groupToOctets.get(station)!.add(octets[2]);
+    }
+
+    for (const [station, octets] of groupToOctets.entries()) {
+      if (octets.size <= 1) {
+        continue;
+      }
+      addIssue({
+        checkId: 3,
+        codeSuffix: 'OCTET_MISMATCH',
+        message: `Station/SubNetwork '${station}' has multiple 3rd octets: ${Array.from(octets).sort((a, b) => a - b).join(', ')}.`,
+        path: `/SCL/Communication`,
+        entityRef: { type: 'Communication', id: `station:${station}` },
+      });
+    }
+  }
+
+  // #4 #5 #6 IP profile checks
+  for (const cap of capRecords) {
+    if (!cap.ip) {
+      continue;
+    }
+    const path = capPath(cap);
+
+    if (cap.ip.startsWith('192.168.')) {
+      if (cap.netmask !== '255.255.255.0' || cap.gateway !== '0.0.0.0') {
+        addIssue({
+          checkId: 4,
+          codeSuffix: 'IP_PROFILE',
+          message: `${cap.iedName}/${cap.apName} with IP ${cap.ip} must use netmask 255.255.255.0 and gateway 0.0.0.0.`,
+          path,
+          context: { iedName: cap.iedName, apName: cap.apName, ip: cap.ip },
+          entityRef: { type: 'ConnectedAP', id: `${cap.iedName}:${cap.apName}`, iedName: cap.iedName },
+        });
+      }
+    }
+
+    if (cap.ip.startsWith('10.30.')) {
+      if (cap.netmask !== '255.255.255.0' || cap.gateway !== '0.0.0.0') {
+        addIssue({
+          checkId: 5,
+          codeSuffix: 'IP_PROFILE',
+          message: `${cap.iedName}/${cap.apName} with IP ${cap.ip} must use netmask 255.255.255.0 and gateway 0.0.0.0.`,
+          path,
+          context: { iedName: cap.iedName, apName: cap.apName, ip: cap.ip },
+          entityRef: { type: 'ConnectedAP', id: `${cap.iedName}:${cap.apName}`, iedName: cap.iedName },
+        });
+      }
+    }
+
+    if (cap.ip.startsWith('172.25.')) {
+      const octets = parseIpv4(cap.ip);
+      const expectedGw = octets ? `${octets[0]}.${octets[1]}.${octets[2]}.254` : undefined;
+      if (cap.netmask !== '255.255.255.0' || !expectedGw || cap.gateway !== expectedGw) {
+        addIssue({
+          checkId: 6,
+          codeSuffix: 'IP_PROFILE',
+          message: `${cap.iedName}/${cap.apName} with IP ${cap.ip} must use netmask 255.255.255.0 and gateway ${expectedGw || '*.254'}.`,
+          path,
+          context: { iedName: cap.iedName, apName: cap.apName, ip: cap.ip },
+          entityRef: { type: 'ConnectedAP', id: `${cap.iedName}:${cap.apName}`, iedName: cap.iedName },
+        });
+      }
+    }
+  }
+
+  // #7 MMS indexed = true
+  for (const ctrl of model.reportControls) {
+    if (ctrl.indexed === true) {
+      continue;
+    }
+    addIssue({
+      checkId: 7,
+      codeSuffix: 'MMS_INDEXED_FALSE',
+      message: `ReportControl '${ctrl.name}' in '${ctrl.iedName}' must have indexed=true.`,
+      path: `/SCL/IED[@name='${ctrl.iedName}']//ReportControl[@name='${ctrl.name}']`,
+      protocol: 'REPORT',
+      context: { iedName: ctrl.iedName, cbName: ctrl.name, dataSet: ctrl.datSet },
+      entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+    });
+  }
+
+  // #8 GOOSE naming
+  for (const ctrl of model.gseControls) {
+    if (!ctrl.name.startsWith('gc')) {
+      addIssue({
+        checkId: 8,
+        codeSuffix: 'CB_NAME',
+        message: `GOOSE control block '${ctrl.name}' in '${ctrl.iedName}' must start with 'gc'.`,
+        path: `/SCL/IED[@name='${ctrl.iedName}']//GSEControl[@name='${ctrl.name}']`,
+        protocol: 'GOOSE',
+        context: { iedName: ctrl.iedName, cbName: ctrl.name, dataSet: ctrl.datSet },
+        entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+      });
+    }
+    const expectedDataset = ctrl.name.startsWith('gc') ? `g${ctrl.name.slice(2)}` : undefined;
+    if (expectedDataset && ctrl.datSet && ctrl.datSet !== expectedDataset) {
+      addIssue({
+        checkId: 8,
+        codeSuffix: 'DATASET_NAME',
+        message: `GOOSE control block '${ctrl.name}' expects dataset '${expectedDataset}', found '${ctrl.datSet}'.`,
+        path: `/SCL/IED[@name='${ctrl.iedName}']//GSEControl[@name='${ctrl.name}']`,
+        protocol: 'GOOSE',
+        context: { iedName: ctrl.iedName, cbName: ctrl.name, dataSet: ctrl.datSet },
+        entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+      });
+    }
+  }
+
+  // #9 duplicate GOOSE MAC / APPID
+  {
+    const byMac = new Map<string, string[]>();
+    const byAppId = new Map<string, string[]>();
+    for (const ctrl of model.gseControls) {
+      const comm = findGooseComm(model, ctrl.iedName, ctrl.apName, ctrl.name);
+      if (!comm) {
+        continue;
+      }
+      const id = `${ctrl.iedName}/${ctrl.name}`;
+      const mac = normalizeMac(comm.mac);
+      const appid = normalizeHex(comm.appId || ctrl.appId);
+      if (mac) {
+        pushMap(byMac, mac, id);
+      }
+      if (appid) {
+        pushMap(byAppId, appid, id);
+      }
+    }
+    for (const [mac, entries] of byMac.entries()) {
+      if (entries.length > 1) {
+        addIssue({
+          checkId: 9,
+          codeSuffix: 'DUP_MAC',
+          message: `Duplicate GOOSE MAC '${mac}' found in: ${entries.join(', ')}.`,
+          path: '/SCL/Communication',
+          protocol: 'GOOSE',
+          context: { mac },
+          entityRef: { type: 'Communication', id: `goose:mac:${mac}` },
+        });
+      }
+    }
+    for (const [appid, entries] of byAppId.entries()) {
+      if (entries.length > 1) {
+        addIssue({
+          checkId: 9,
+          codeSuffix: 'DUP_APPID',
+          message: `Duplicate GOOSE APPID '${appid}' found in: ${entries.join(', ')}.`,
+          path: '/SCL/Communication',
+          protocol: 'GOOSE',
+          context: { appid },
+          entityRef: { type: 'Communication', id: `goose:appid:${appid}` },
+        });
+      }
+    }
+  }
+
+  // #10 GOOSE MAC 2nd last byte == IP 3rd octet in hex
+  for (const ctrl of model.gseControls) {
+    const comm = findGooseComm(model, ctrl.iedName, ctrl.apName, ctrl.name);
+    if (!comm?.mac) {
+      continue;
+    }
+    const cap = ctrl.apName ? capIndex.get(`${ctrl.iedName}:${ctrl.apName}`) : undefined;
+    const octets = parseIpv4(cap?.ip);
+    const macBytes = parseMacBytes(comm.mac);
+    if (!octets || !macBytes || macBytes.length < 6) {
+      continue;
+    }
+    const expected = toHexByte(octets[2]);
+    const actual = macBytes[4];
+    if (actual !== expected) {
+      addIssue({
+        checkId: 10,
+        codeSuffix: 'MAC_STATION_MISMATCH',
+        message: `GOOSE ${ctrl.iedName}/${ctrl.name} MAC station byte '${actual}' must equal IP 3rd octet hex '${expected}'.`,
+        path: `/SCL/Communication//GSE[@cbName='${ctrl.name}']`,
+        protocol: 'GOOSE',
+        context: { iedName: ctrl.iedName, cbName: ctrl.name, mac: comm.mac, ip: cap?.ip },
+        entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+      });
+    }
+  }
+
+  // #11 and #12 GOOSE profile rules
+  for (const ctrl of model.gseControls) {
+    const comm = findGooseComm(model, ctrl.iedName, ctrl.apName, ctrl.name);
+    if (!comm) {
+      continue;
+    }
+
+    const hasP = ctrl.name.toUpperCase().includes('P');
+    const checkId = hasP ? 11 : 12;
+    const appid = normalizeHex(comm.appId || ctrl.appId);
+    const macBytes = parseMacBytes(comm.mac);
+    const lastMacByte = macBytes?.[5];
+    const vlan = toNumber(comm.vlanPriority);
+    const minTime = toNumber(comm.minTime);
+    const maxTime = toNumber(comm.maxTime);
+
+    const startPrefix = hasP ? '80' : '00';
+    const expectedVlan = hasP ? 7 : 4;
+    const expectedMin = hasP ? 4 : 10;
+    const expectedMax = hasP ? 2000 : 10000;
+
+    const appidValid = Boolean(appid && /^[0-9A-F]{4}$/.test(appid) && appid.startsWith(startPrefix));
+    const appidMacAligned = Boolean(appid && lastMacByte && appid.slice(-2) === lastMacByte);
+    const vlanValid = vlan === expectedVlan;
+    const minValid = minTime === expectedMin;
+    const maxValid = maxTime === expectedMax;
+
+    if (!appidValid || !appidMacAligned || !vlanValid || !minValid || !maxValid) {
+      addIssue({
+        checkId,
+        codeSuffix: 'PROFILE_MISMATCH',
+        message: `GOOSE ${ctrl.iedName}/${ctrl.name} profile mismatch: appid=${appid || '-'} vlan=${comm.vlanPriority || '-'} min=${comm.minTime || '-'} max=${comm.maxTime || '-'}.`,
+        path: `/SCL/Communication//GSE[@cbName='${ctrl.name}']`,
+        protocol: 'GOOSE',
+        context: {
+          iedName: ctrl.iedName,
+          cbName: ctrl.name,
+          appid: appid || undefined,
+          mac: comm.mac,
+        },
+        entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+      });
+    }
+  }
+
+  // #13 #14 required GOOSE groups by IED naming
+  for (const ied of model.ieds) {
+    const controls = model.gseControls
+      .filter((cb) => cb.iedName === ied.name)
+      .map((cb) => cb.name.toLowerCase());
+
+    if (/EW0\d\d/i.test(ied.name)) {
+      const missing = [
+        controls.some((name) => name.startsWith('gcptrp')) ? null : 'gcPtrp*',
+        controls.some((name) => name.startsWith('gcpev')) ? null : 'gcPev*',
+        controls.some((name) => name.startsWith('gcind')) ? null : 'gcInd*',
+      ].filter(Boolean) as string[];
+      if (missing.length > 0) {
+        addIssue({
+          checkId: 13,
+          codeSuffix: 'MISSING_CB_GROUP',
+          message: `IED '${ied.name}' is missing required GOOSE groups: ${missing.join(', ')}.`,
+          path: `/SCL/IED[@name='${ied.name}']`,
+          protocol: 'GOOSE',
+          context: { iedName: ied.name },
+          entityRef: { type: 'IED', id: `ied:${ied.name}`, iedName: ied.name },
+        });
+      }
+    }
+
+    if (/EW8\d\d/i.test(ied.name)) {
+      const missing = [
+        controls.some((name) => name.startsWith('gcptrp')) ? null : 'gcPtrp*',
+        controls.some((name) => name.startsWith('gcind')) ? null : 'gcInd*',
+      ].filter(Boolean) as string[];
+      if (missing.length > 0) {
+        addIssue({
+          checkId: 14,
+          codeSuffix: 'MISSING_CB_GROUP',
+          message: `IED '${ied.name}' is missing required GOOSE groups: ${missing.join(', ')}.`,
+          path: `/SCL/IED[@name='${ied.name}']`,
+          protocol: 'GOOSE',
+          context: { iedName: ied.name },
+          entityRef: { type: 'IED', id: `ied:${ied.name}`, iedName: ied.name },
+        });
+      }
+    }
+  }
+
+  // #15 #16 #17 #18 SV checks
+  {
+    const bySmvId = new Map<string, string[]>();
+    const byMac = new Map<string, string[]>();
+    const byAppId = new Map<string, string[]>();
+
+    for (const ctrl of model.svControls) {
+      const comm = findSvComm(model, ctrl.iedName, ctrl.apName, ctrl.name);
+      const id = `${ctrl.iedName}/${ctrl.name}`;
+
+      if (ctrl.smvId) {
+        pushMap(bySmvId, ctrl.smvId.toUpperCase(), id);
+      }
+
+      const mac = normalizeMac(comm?.mac);
+      const appid = normalizeHex(comm?.appId);
+      if (mac) {
+        pushMap(byMac, mac, id);
+      }
+      if (appid) {
+        pushMap(byAppId, appid, id);
+      }
+
+      if (appid && !appid.startsWith('4')) {
+        addIssue({
+          checkId: 16,
+          codeSuffix: 'APPID_PREFIX',
+          message: `SV ${id} APPID '${appid}' must start with '4'.`,
+          path: `/SCL/Communication//SMV[@cbName='${ctrl.name}']`,
+          protocol: 'SV',
+          context: { iedName: ctrl.iedName, cbName: ctrl.name, appid },
+          entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+        });
+      }
+
+      const cap = ctrl.apName ? capIndex.get(`${ctrl.iedName}:${ctrl.apName}`) : undefined;
+      const octets = parseIpv4(cap?.ip);
+      const macBytes = parseMacBytes(comm?.mac);
+      if (octets && macBytes && macBytes.length >= 6) {
+        const expected = toHexByte(octets[2]);
+        if (macBytes[4] !== expected) {
+          addIssue({
+            checkId: 17,
+            codeSuffix: 'MAC_STATION_MISMATCH',
+            message: `SV ${id} MAC station byte '${macBytes[4]}' must equal IP 3rd octet hex '${expected}'.`,
+            path: `/SCL/Communication//SMV[@cbName='${ctrl.name}']`,
+            protocol: 'SV',
+            context: { iedName: ctrl.iedName, cbName: ctrl.name, mac: comm?.mac, ip: cap?.ip },
+            entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+          });
+        }
+      }
+
+      const appid4hex40 = Boolean(appid && /^[0-9A-F]{4}$/.test(appid) && appid.startsWith('40'));
+      const lastMacByte = macBytes?.[5];
+      const appidMacAligned = Boolean(appid && lastMacByte && appid.slice(-2) === lastMacByte);
+      const smvId = ctrl.smvId || '';
+      const expectedVlan = smvId.toUpperCase().endsWith('P') ? 7 : smvId.toUpperCase().endsWith('M') ? 4 : undefined;
+      const vlan = toNumber(comm?.vlanPriority);
+      const vlanMatches = expectedVlan === undefined || vlan === expectedVlan;
+
+      if (!appid4hex40 || !appidMacAligned || !vlanMatches) {
+        addIssue({
+          checkId: 18,
+          codeSuffix: 'PROFILE_MISMATCH',
+          message: `SV ${id} profile mismatch: appid=${appid || '-'} mac=${comm?.mac || '-'} vlan=${comm?.vlanPriority || '-'}.`,
+          path: `/SCL/Communication//SMV[@cbName='${ctrl.name}']`,
+          protocol: 'SV',
+          context: { iedName: ctrl.iedName, cbName: ctrl.name, appid: appid || undefined, mac: comm?.mac },
+          entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+        });
+      }
+    }
+
+    for (const [smvId, entries] of bySmvId.entries()) {
+      if (entries.length > 1) {
+        addIssue({
+          checkId: 15,
+          codeSuffix: 'DUP_SMVID',
+          message: `Duplicate SV smvID '${smvId}' found in: ${entries.join(', ')}.`,
+          path: '/SCL',
+          protocol: 'SV',
+          entityRef: { type: 'Communication', id: `sv:smvid:${smvId}` },
+        });
+      }
+    }
+    for (const [mac, entries] of byMac.entries()) {
+      if (entries.length > 1) {
+        addIssue({
+          checkId: 15,
+          codeSuffix: 'DUP_MAC',
+          message: `Duplicate SV MAC '${mac}' found in: ${entries.join(', ')}.`,
+          path: '/SCL/Communication',
+          protocol: 'SV',
+          context: { mac },
+          entityRef: { type: 'Communication', id: `sv:mac:${mac}` },
+        });
+      }
+    }
+    for (const [appid, entries] of byAppId.entries()) {
+      if (entries.length > 1) {
+        addIssue({
+          checkId: 15,
+          codeSuffix: 'DUP_APPID',
+          message: `Duplicate SV APPID '${appid}' found in: ${entries.join(', ')}.`,
+          path: '/SCL/Communication',
+          protocol: 'SV',
+          context: { appid },
+          entityRef: { type: 'Communication', id: `sv:appid:${appid}` },
+        });
+      }
+    }
+  }
+
+  // IEC_001: GOOSE subscription completeness — every GSEControl must have ≥1 subscriber
+  {
+    for (const ctrl of model.gseControls) {
+      const hasSubscriber = model.edges.some(
+        (e) => e.signalType === 'GOOSE' && e.publisherIed === ctrl.iedName && e.controlBlockName === ctrl.name && e.status === 'resolved',
+      );
+      if (!hasSubscriber) {
+        addIssue({
+          checkId: 19,
+          codeSuffix: 'NO_SUBSCRIBER',
+          message: `GSEControl '${ctrl.name}' in '${ctrl.iedName}' has no confirmed subscribers.`,
+          path: `/SCL/IED[@name='${ctrl.iedName}']//GSEControl[@name='${ctrl.name}']`,
+          protocol: 'GOOSE',
+          context: { iedName: ctrl.iedName, cbName: ctrl.name, dataSet: ctrl.datSet },
+          entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+        });
+      }
+    }
+  }
+
+  // IEC_002: SV subscription completeness — every SampledValueControl must have ≥1 subscriber
+  {
+    for (const ctrl of model.svControls) {
+      const hasSubscriber = model.edges.some(
+        (e) => e.signalType === 'SV' && e.publisherIed === ctrl.iedName && e.controlBlockName === ctrl.name && e.status === 'resolved',
+      );
+      if (!hasSubscriber) {
+        addIssue({
+          checkId: 20,
+          codeSuffix: 'NO_SUBSCRIBER',
+          message: `SampledValueControl '${ctrl.name}' in '${ctrl.iedName}' has no confirmed subscribers.`,
+          path: `/SCL/IED[@name='${ctrl.iedName}']//SampledValueControl[@name='${ctrl.name}']`,
+          protocol: 'SV',
+          context: { iedName: ctrl.iedName, cbName: ctrl.name, dataSet: ctrl.datSet },
+          entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+        });
+      }
+    }
+  }
+
+  // IEC_003: ExtRef fully resolved — all ExtRef with iedName must resolve to a real control block
+  {
+    const gseKeys = new Set(model.gseControls.map((c) => `${c.iedName}:${c.name}`));
+    const svKeys = new Set(model.svControls.map((c) => `${c.iedName}:${c.name}`));
+    const iedNameSet = new Set(model.ieds.map((i) => i.name));
+
+    for (const [index, extEntry] of model.extRefs.entries()) {
+      const ext = extEntry.extRef;
+      const publisher = ext.iedName;
+      if (!publisher) continue;
+
+      const path = `/SCL/IED[@name='${extEntry.ownerIed}']//ExtRef[${index + 1}]`;
+
+      // Check publisher IED exists
+      if (!iedNameSet.has(publisher)) {
+        addIssue({
+          checkId: 21,
+          codeSuffix: 'UNKNOWN_IED',
+          message: `ExtRef in '${extEntry.ownerIed}' references unknown IED '${publisher}'.`,
+          path,
+          protocol: 'Generic',
+          context: { iedName: extEntry.ownerIed, ldInst: ext.ldInst, lnClass: ext.lnClass },
+          entityRef: { type: 'ExtRef', id: `${extEntry.ownerIed}:extref:${index}`, iedName: extEntry.ownerIed },
+        });
+        continue;
+      }
+
+      // If srcCBName given, check it resolves to a known control block
+      if (ext.srcCBName) {
+        const cbKey = `${publisher}:${ext.srcCBName}`;
+        const service = (ext.serviceType || '').toLowerCase();
+        const isSv = service.includes('smv') || service.includes('sv');
+        const cbExists = isSv ? svKeys.has(cbKey) : gseKeys.has(cbKey) || svKeys.has(cbKey);
+        if (!cbExists) {
+          addIssue({
+            checkId: 21,
+            codeSuffix: 'UNKNOWN_CB',
+            message: `ExtRef in '${extEntry.ownerIed}' references unknown control block '${ext.srcCBName}' on IED '${publisher}'.`,
+            path,
+            protocol: isSv ? 'SV' : 'GOOSE',
+            context: { iedName: extEntry.ownerIed, cbName: ext.srcCBName, ldInst: ext.ldInst },
+            entityRef: { type: 'ExtRef', id: `${extEntry.ownerIed}:extref:${index}`, iedName: extEntry.ownerIed },
+          });
+        }
+      }
+    }
+  }
+
+  // IEC_004: IED naming convention — names must match [A-Z]{2,5}_[A-Z]_[A-Z0-9]{1,5}_EW[0-9]{3}
+  {
+    const IED_NAME_RE = /^[A-Z]{2,5}_[A-Z]_[A-Z0-9]{1,5}_EW[0-9]{3}$/;
+    for (const ied of model.ieds) {
+      if (!IED_NAME_RE.test(ied.name)) {
+        addIssue({
+          checkId: 22,
+          codeSuffix: 'NAMING',
+          message: `IED '${ied.name}' does not match naming convention [A-Z]{2,5}_[A-Z]_[A-Z0-9]{1,5}_EW[0-9]{3}.`,
+          path: `/SCL/IED[@name='${ied.name}']`,
+          context: { iedName: ied.name },
+          entityRef: { type: 'IED', id: `ied:${ied.name}`, iedName: ied.name },
+        });
+      }
+    }
+  }
+
+  // IEC_005: IED placed in substation — every IED must have ≥1 LNode reference in Substation hierarchy
+  {
+    const iEdsInSubstation = new Set<string>();
+    for (const bay of model.bays) {
+      for (const name of bay.iedNames) {
+        iEdsInSubstation.add(name);
+      }
+    }
+    for (const ied of model.ieds) {
+      if (!iEdsInSubstation.has(ied.name)) {
+        addIssue({
+          checkId: 23,
+          codeSuffix: 'NOT_IN_SUBSTATION',
+          message: `IED '${ied.name}' has no LNode reference in the Substation hierarchy.`,
+          path: `/SCL/IED[@name='${ied.name}']`,
+          context: { iedName: ied.name },
+          entityRef: { type: 'IED', id: `ied:${ied.name}`, iedName: ied.name },
+        });
+      }
+    }
+  }
+
+  // IEC_006: DataTypeTemplates completeness — all lnType in LN/LN0 must exist in DataTypeTemplates
+  {
+    const knownTypes = model.dataTypeTemplates?.lNodeTypes;
+    if (knownTypes) {
+      for (const ied of model.ieds) {
+        for (const ld of ied.lDevices) {
+          const lns = [ld.ln0, ...ld.lns].filter(Boolean);
+          for (const ln of lns) {
+            if (ln && ln.lnType && !knownTypes.has(ln.lnType)) {
+              addIssue({
+                checkId: 24,
+                codeSuffix: 'MISSING_LNTYPE',
+                message: `LN '${ln.lnClass}${ln.inst}' in '${ied.name}/${ld.inst}' references unknown lnType '${ln.lnType}'.`,
+                path: `/SCL/IED[@name='${ied.name}']//LDevice[@inst='${ld.inst}']//LN[@lnType='${ln.lnType}']`,
+                context: { iedName: ied.name, ldInst: ld.inst, lnClass: ln.lnClass },
+                entityRef: { type: 'IED', id: `ied:${ied.name}`, iedName: ied.name },
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // IEC_007: GOOSE/SV dataset not empty — every referenced dataset must have ≥1 FCDA
+  {
+    const dataSetMap = new Map(model.dataSets.map((d) => [`${d.iedName}:${d.name}`, d]));
+    for (const ctrl of [...model.svControls]) {
+      if (!ctrl.datSet) continue;
+      const ds = dataSetMap.get(`${ctrl.iedName}:${ctrl.datSet}`);
+      if (ds && ds.fcdas.length === 0) {
+        addIssue({
+          checkId: 25,
+          codeSuffix: 'DATASET_EMPTY',
+          message: `DataSet '${ctrl.datSet}' referenced by SV '${ctrl.name}' in '${ctrl.iedName}' is empty.`,
+          path: `/SCL/IED[@name='${ctrl.iedName}']//DataSet[@name='${ctrl.datSet}']`,
+          protocol: 'SV',
+          context: { iedName: ctrl.iedName, cbName: ctrl.name, dataSet: ctrl.datSet },
+          entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+        });
+      }
+    }
+    for (const ctrl of model.gseControls) {
+      if (!ctrl.datSet) continue;
+      const ds = dataSetMap.get(`${ctrl.iedName}:${ctrl.datSet}`);
+      if (ds && ds.fcdas.length === 0) {
+        addIssue({
+          checkId: 25,
+          codeSuffix: 'DATASET_EMPTY',
+          message: `DataSet '${ctrl.datSet}' referenced by GOOSE '${ctrl.name}' in '${ctrl.iedName}' is empty.`,
+          path: `/SCL/IED[@name='${ctrl.iedName}']//DataSet[@name='${ctrl.datSet}']`,
+          protocol: 'GOOSE',
+          context: { iedName: ctrl.iedName, cbName: ctrl.name, dataSet: ctrl.datSet },
+          entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+        });
+      }
+    }
+  }
+
+  // IEC_008: confRev consistency — control block confRev must be non-zero
+  {
+    for (const ctrl of [...model.gseControls, ...model.svControls]) {
+      const rev = ctrl.confRev ? Number(ctrl.confRev) : undefined;
+      if (rev === 0 || ctrl.confRev === '0') {
+        const proto = ctrl.type === 'GOOSE' ? 'GOOSE' : 'SV';
+        addIssue({
+          checkId: 26,
+          codeSuffix: 'ZERO_CONFREV',
+          message: `${proto} control block '${ctrl.name}' in '${ctrl.iedName}' has confRev=0 indicating unconfigured state.`,
+          path: `/SCL/IED[@name='${ctrl.iedName}']//GSEControl[@name='${ctrl.name}']`,
+          protocol: proto,
+          context: { iedName: ctrl.iedName, cbName: ctrl.name },
+          entityRef: { type: 'ControlBlock', id: ctrl.key, iedName: ctrl.iedName },
+        });
+      }
+    }
+  }
+
+  // IEC_009: EW8** must have SV controls
+  {
+    const svByIed = new Set(model.svControls.map((c) => c.iedName));
+    for (const ied of model.ieds) {
+      if (!/EW8\d\d/i.test(ied.name)) continue;
+      if (!svByIed.has(ied.name)) {
+        addIssue({
+          checkId: 27,
+          codeSuffix: 'MISSING_SV',
+          message: `IED '${ied.name}' (EW8**) must have at least one SampledValueControl.`,
+          path: `/SCL/IED[@name='${ied.name}']`,
+          protocol: 'SV',
+          context: { iedName: ied.name },
+          entityRef: { type: 'IED', id: `ied:${ied.name}`, iedName: ied.name },
+        });
+      }
+    }
+  }
+
+  const checks: LandsnetCheckSummary[] = CHECKS.map((check) => ({
+    id: check.id,
+    code: checkCode(check.id),
+    title: check.title,
+    passed: (issueCountByCheck.get(check.id) || 0) === 0,
+    issueCount: issueCountByCheck.get(check.id) || 0,
+  }));
+
+  // include dictionary-driven sanity check to avoid empty output sections
+  if (Object.keys(dictionaries.IED_dict).length === 0) {
+    checks[0] = { ...checks[0], passed: false, issueCount: Math.max(1, checks[0].issueCount) };
+  }
+
+  return { issues, checks };
+}
+
+function flattenCaps(model: SclModel): CapRecord[] {
+  const caps: CapRecord[] = [];
+  for (const subnet of model.subNetworks) {
+    for (const cap of subnet.connectedAps) {
+      caps.push({
+        subNetwork: subnet.name,
+        iedName: cap.iedName,
+        apName: cap.apName,
+        ip: cap.ip,
+        netmask: cap.netmask,
+        gateway: cap.gateway,
+      });
+    }
+  }
+  return caps;
+}
+
+function buildIedStationMap(model: SclModel): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const bay of model.bays) {
+    if (!bay.substationName) {
+      continue;
+    }
+    for (const iedName of bay.iedNames) {
+      if (!map.has(iedName)) {
+        map.set(iedName, bay.substationName);
+      }
+    }
+  }
+  return map;
+}
+
+function findGooseComm(model: SclModel, iedName: string, apName: string | undefined, cbName: string) {
+  return (
+    model.gseComms.find((comm) => comm.iedName === iedName && comm.cbName === cbName && (!apName || comm.apName === apName)) ||
+    model.gseComms.find((comm) => comm.iedName === iedName && comm.cbName === cbName) ||
+    model.gseComms.find((comm) => comm.iedName === iedName && (!apName || comm.apName === apName))
+  );
+}
+
+function findSvComm(model: SclModel, iedName: string, apName: string | undefined, cbName: string) {
+  return (
+    model.smvComms.find((comm) => comm.iedName === iedName && comm.cbName === cbName && (!apName || comm.apName === apName)) ||
+    model.smvComms.find((comm) => comm.iedName === iedName && comm.cbName === cbName) ||
+    model.smvComms.find((comm) => comm.iedName === iedName && (!apName || comm.apName === apName))
+  );
+}
+
+function pushMap(map: Map<string, string[]>, key: string, value: string): void {
+  if (!map.has(key)) {
+    map.set(key, []);
+  }
+  map.get(key)!.push(value);
+}
+
+function parseIpv4(value?: string): [number, number, number, number] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parts = value.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)) {
+    return undefined;
+  }
+  return [parts[0], parts[1], parts[2], parts[3]];
+}
+
+function parseMacBytes(value?: string): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parts = value.match(/[0-9a-fA-F]{2}/g);
+  if (!parts || parts.length < 6) {
+    return undefined;
+  }
+  return parts.map((part) => part.toUpperCase());
+}
+
+function normalizeMac(value?: string): string | undefined {
+  const bytes = parseMacBytes(value);
+  if (!bytes || bytes.length < 6) {
+    return undefined;
+  }
+  return bytes.slice(0, 6).join('-');
+}
+
+function normalizeHex(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.trim().toUpperCase().replace(/^0X/, '');
+  return normalized || undefined;
+}
+
+function toNumber(value?: string): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+}
+
+function toHexByte(input: number): string {
+  return input.toString(16).toUpperCase().padStart(2, '0');
+}
+
+function capPath(cap: CapRecord): string {
+  return `/SCL/Communication/SubNetwork[@name='${cap.subNetwork}']/ConnectedAP[@iedName='${cap.iedName}'][@apName='${cap.apName}']`;
+}
+
+function checkCode(id: number): string {
+  return CHECKS.find((c) => c.id === id)?.code ?? `LNET_${String(id).padStart(3, '0')}`;
+}
