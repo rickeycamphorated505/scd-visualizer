@@ -68,6 +68,7 @@ export default function NetworkVisualizerPanel({
   const [detailsTab, setDetailsTab] = useState<DetailsTab>('summary');
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [showDebugRawList, setShowDebugRawList] = useState(false);
+  const [showHeat, setShowHeat] = useState(true);
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
   const [zoom, setZoom] = useState(1);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -176,8 +177,9 @@ export default function NetworkVisualizerPanel({
     if (!view) {
       return { nodes: [] as Node[], edges: [] as Edge[] };
     }
-    return buildGraph(view);
-  }, [view]);
+    const trafficByIed = showHeat ? computeTrafficByIed(view) : new Map<string, number>();
+    return buildGraph(view, trafficByIed, showHeat);
+  }, [view, showHeat]);
 
   const hasRenderableContainer = containerSize.width > 40 && containerSize.height > 40;
 
@@ -560,6 +562,9 @@ export default function NetworkVisualizerPanel({
             </label>
             <Button onClick={handleFitView}>Fit View</Button>
             <Button onClick={handleDiagnostics}>Diagnostics</Button>
+            <Button onClick={() => setShowHeat((v) => !v)} title="Color nodes and edges by traffic estimate">
+              {showHeat ? 'Heat ON' : 'Heat OFF'}
+            </Button>
             <Button
               onClick={() => printNetworkSummary(model, selectedSubNetwork || undefined)}
               disabled={!model}
@@ -580,6 +585,34 @@ export default function NetworkVisualizerPanel({
           </div>
         ) : null}
         <div ref={graphRef} className="graph-canvas">
+          {showHeat ? (
+            <div className="net-traffic-legend" aria-hidden="true">
+              <div className="net-traffic-legend-title">Traffic</div>
+              <div className="net-traffic-legend-row">
+                <span className="net-traffic-legend-line" style={{ background: 'var(--mms)' }} />
+                <span>— &lt; 1 Mbps</span>
+              </div>
+              <div className="net-traffic-legend-row">
+                <span className="net-traffic-legend-line" style={{ background: 'var(--goose)' }} />
+                <span>— 1–10 Mbps</span>
+              </div>
+              <div className="net-traffic-legend-row">
+                <span className="net-traffic-legend-line" style={{ background: 'var(--sv)' }} />
+                <span>— 10+ Mbps</span>
+              </div>
+              <div className="net-traffic-legend-divider" />
+              <div className="net-traffic-legend-squares">
+                <span className="net-traffic-legend-square net-node-cold" />
+                <span>Cold</span>
+                <span className="net-traffic-legend-square net-node-warm" />
+                <span>Warm</span>
+                <span className="net-traffic-legend-square net-node-hot" />
+                <span>Hot</span>
+                <span className="net-traffic-legend-square net-node-fire" />
+                <span>Fire</span>
+              </div>
+            </div>
+          ) : null}
           {!hasRenderableContainer ? (
             <div className="graph-empty-state">
               <p className="hint">Canvas is not ready yet (container has no size).</p>
@@ -759,7 +792,35 @@ export default function NetworkVisualizerPanel({
   );
 }
 
-function buildGraph(view: NetworkTopologyView): { nodes: Node[]; edges: Edge[] } {
+function computeTrafficByIed(view: NetworkTopologyView): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const link of view.links) {
+    for (const item of link.filteredFlowItems) {
+      const prev = map.get(item.iedName) ?? 0;
+      map.set(item.iedName, prev + estimateFlowKbps(item));
+    }
+  }
+  return map;
+}
+
+function trafficNodeClass(totalKbps: number): 'net-node-cold' | 'net-node-warm' | 'net-node-hot' | 'net-node-fire' {
+  if (totalKbps < 500) return 'net-node-cold';
+  if (totalKbps < 2000) return 'net-node-warm';
+  if (totalKbps < 7000) return 'net-node-hot';
+  return 'net-node-fire';
+}
+
+function trafficEdgeStyle(totalKbps: number): { stroke: string; strokeWidth: number } {
+  if (totalKbps < 1000) return { stroke: 'var(--mms)', strokeWidth: 1.5 };
+  if (totalKbps < 10_000) return { stroke: 'var(--goose)', strokeWidth: 2.5 };
+  return { stroke: 'var(--sv)', strokeWidth: 4 };
+}
+
+function buildGraph(
+  view: NetworkTopologyView,
+  trafficByIed: Map<string, number>,
+  showHeat: boolean,
+): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const iedNames = Array.from(new Set(
@@ -804,11 +865,13 @@ function buildGraph(view: NetworkTopologyView): { nodes: Node[]; edges: Edge[] }
     nodes.push({
       id: `ied:${iedName}`,
       position: iedPos,
-      data: { label: iedName },
+      className: showHeat ? trafficNodeClass(trafficByIed.get(iedName) ?? 0) : undefined,
+      data: { label: showHeat ? `${iedName}\n${formatRate(trafficByIed.get(iedName) ?? 0)}` : iedName },
       style: {
         border: '1px solid #adc5dd',
         background: '#f7fbff',
         minWidth: 130,
+        whiteSpace: showHeat ? ('pre-line' as const) : undefined,
       },
     });
 
@@ -817,14 +880,16 @@ function buildGraph(view: NetworkTopologyView): { nodes: Node[]; edges: Edge[] }
       const link = view.links.find((item) => item.portKey === port.key);
       if (link) {
         const dominant = dominantProtocol(link.filteredFlowItems);
+        const trafficTotalKbps = trafficByIed.get(iedName) ?? 0;
+        const edgeHeat = showHeat ? trafficEdgeStyle(trafficTotalKbps) : null;
         edges.push({
           id: link.id,
           source: `ied:${iedName}`,
           target: link.switchId,
           data: { kind: 'traffic', linkId: link.id },
           style: {
-            stroke: protocolStroke(dominant),
-            strokeWidth: 1.9,
+            stroke: edgeHeat ? edgeHeat.stroke : protocolStroke(dominant),
+            strokeWidth: edgeHeat ? edgeHeat.strokeWidth : 1.9,
             opacity: Math.max(0.35, 1 - idx * 0.12),
           },
         });

@@ -4,19 +4,22 @@ import { parseSclDocument } from './parser/sclParser';
 import type { ParseResult } from './parser/sclParser';
 import { deserializeModel } from './workers/parseWorker';
 import TopBar from './components/TopBar';
-import { Button, Chip, EmptyState } from './components/ui';
+import { Button, Chip } from './components/ui';
 import SubstationTree from './components/SubstationTree';
 import GraphCanvas from './components/GraphCanvas';
 import InspectorPanel from './components/InspectorPanel';
 import CommandPalette from './components/CommandPalette';
 import CompareBar from './components/CompareBar';
+import CompareAssignDialog from './components/CompareAssignDialog';
 import IssuesWorkspace from './components/IssuesWorkspace';
 import StatisticsWorkspace from './components/StatisticsWorkspace';
 import ChangesPanel from './components/ChangesPanel';
 import NetworkVisualizerPanel from './components/NetworkVisualizerPanel';
 import ValidationMatrix from './components/ValidationMatrix';
 import AddressesTable from './components/AddressesTable';
+import IedExplorer from './components/IedExplorer';
 import SubscriptionMatrix from './components/SubscriptionMatrix';
+import VersionPanel from './components/VersionPanel';
 import ThreePaneLayout from './components/ThreePaneLayout';
 import { changesCsv, detailedFlowsCsv, gooseMatrixCsv, protocolSummaryCsv, validationCsv } from './utils/exportCsv';
 import { downloadExcelIp, type ExportSheetsOption } from './utils/exportExcel';
@@ -29,6 +32,19 @@ import { useModelValidation } from './state/useModelValidation';
 import { useSclFiles } from './state/useSclFiles';
 import { useCompareState, type ChangeFilters } from './state/useCompareState';
 import { buildDiffReport } from './diff/report';
+import StartupScreen from './components/StartupScreen';
+import DashboardWorkspace from './components/DashboardWorkspace';
+
+export type AppMode =
+  | 'dashboard'
+  | 'visualizer'
+  | 'network'
+  | 'issues'
+  | 'compare'
+  | 'statistics'
+  | 'addresses'
+  | 'ied'
+  | 'version';
 
 export default function App(): JSX.Element {
   return (
@@ -41,7 +57,7 @@ export default function App(): JSX.Element {
 }
 
 function AppInner(): JSX.Element {
-  const [appMode, setAppMode] = useState<'visualizer' | 'network' | 'issues' | 'compare' | 'statistics' | 'addresses'>('visualizer');
+  const [appMode, setAppMode] = useState<AppMode>('visualizer');
   const [graphSubView, setGraphSubView] = useState<'visualizer' | 'subscriptions'>('visualizer');
   const [commandOpen, setCommandOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -49,14 +65,43 @@ function AppInner(): JSX.Element {
   const [fileSizeWarning, setFileSizeWarning] = useState<{ file: File; onResult: (result: ParseResult, name: string) => void; mb: string } | null>(null);
   const { toasts, showToast, dismiss } = useToast();
 
+  const [rawXml, setRawXml] = useState<string>('');
   const [compareVariant, setCompareVariant] = useState<'single' | 'compare'>('single');
   const [showOnlyChanges, setShowOnlyChanges] = useState(false);
   const [selectedChangeId, setSelectedChangeId] = useState<string | null>(null);
   const [changeFilters, setChangeFilters] = useState<ChangeFilters>({ type: 'all', area: 'all', query: '' });
 
+  const [waivedChecks, setWaivedChecks] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('vm-waived-checks');
+      return stored ? new Set(JSON.parse(stored) as string[]) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  });
+
+  function toggleWaive(code: string) {
+    setWaivedChecks((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      localStorage.setItem('vm-waived-checks', JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  // Compare flow state
+  const [assignDialog, setAssignDialog] = useState<{ fileName: string } | null>(null);
+  const [pendingCompareSlot, setPendingCompareSlot] = useState<'A' | 'B' | null>(null);
+  const [compareViewFile, setCompareViewFile] = useState<'A' | 'B' | null>(null);
+
+  const [pendingCompareFirst, setPendingCompareFirst] = useState<{ result: import('./parser/sclParser').ParseResult; name: string } | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const baselineInputRef = useRef<HTMLInputElement>(null);
   const newInputRef = useRef<HTMLInputElement>(null);
+  const compareSecondInputRef = useRef<HTMLInputElement>(null);
+  const startupCompareInputRef = useRef<HTMLInputElement>(null);
 
   const { state: ui, dispatch } = useUiStore();
   const { state: vstate, dispatch: vdispatch } = useValidationStore();
@@ -74,8 +119,21 @@ function AppInner(): JSX.Element {
     applyParsedNew,
   } = useSclFiles(dispatch);
 
-  const activeModel = appMode === 'compare' && compareVariant === 'compare' ? newModel : model;
-  const landsnetReport = useModelValidation(activeModel, vdispatch);
+  const fileType = useMemo(() => {
+    if (!fileName) return undefined;
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    const map: Record<string, string> = { scd: 'SCD', cid: 'CID', icd: 'ICD', iid: 'IID', ssd: 'SSD', xml: 'XML' };
+    return ext ? (map[ext] ?? 'SCL') : undefined;
+  }, [fileName]);
+
+  const isCompareMode = appMode === 'compare' || compareViewFile !== null;
+  const activeModel =
+    compareViewFile === 'A' ? baselineModel :
+    compareViewFile === 'B' ? newModel :
+    appMode === 'compare' && compareVariant === 'compare' ? newModel :
+    model;
+  const locked = activeModel?.header?.helinksLocked ?? false;
+  const landsnetReport = useModelValidation(activeModel, vdispatch, rawXml);
 
   const visibleBase = useMemo(() => deriveVisibleGraph(activeModel, ui), [activeModel, ui]);
   const { diff, selectedChange, compareChanges } = useCompareState({
@@ -107,7 +165,43 @@ function AppInner(): JSX.Element {
     };
   }, [activeModel, visibleBase]);
 
-  const stableIssues = useMemo(() => vstate.issues, [vstate.issues]);
+  const filteredIssues = useMemo(() => {
+    if (waivedChecks.size === 0) return vstate.issues;
+    return vstate.issues.filter((i) => {
+      const parts = i.code.split('_');
+      const baseCode = parts.length >= 2 ? `${parts[0]}_${parts[1]}` : i.code;
+      return !waivedChecks.has(baseCode);
+    });
+  }, [vstate.issues, waivedChecks]);
+  const stableIssues = filteredIssues;
+
+  const [pendingLastSession, setPendingLastSession] = useState<{ fileName: string; ieds: number; ts: number } | null>(null);
+  const latestIssuesCountRef = useRef<number>(0);
+  useEffect(() => {
+    latestIssuesCountRef.current = stableIssues.length;
+  }, [stableIssues.length]);
+
+  useEffect(() => {
+    if (!pendingLastSession) return;
+    const id = window.setTimeout(() => {
+      try {
+        localStorage.setItem(
+          'vm-last-session',
+          JSON.stringify({
+            fileName: pendingLastSession.fileName,
+            ieds: pendingLastSession.ieds,
+            issues: latestIssuesCountRef.current,
+            ts: pendingLastSession.ts,
+          }),
+        );
+      } catch {
+        // Ignore localStorage errors (quota / private mode)
+      } finally {
+        setPendingLastSession(null);
+      }
+    }, 800);
+    return () => window.clearTimeout(id);
+  }, [pendingLastSession]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -165,8 +259,11 @@ function AppInner(): JSX.Element {
     const res = await fetch(path);
     const text = await res.text();
     const result = parseSclDocument(text);
-    setAppMode('visualizer');
     applyParsedMain(result, path.split('/').pop() || path);
+    if (result.model) {
+      setPendingLastSession({ fileName: path.split('/').pop() || path, ieds: result.model.ieds.length, ts: Date.now() });
+      setAppMode('dashboard');
+    }
   }
 
   const FILE_SIZE_WARN_BYTES = 50 * 1024 * 1024; // 50 MB
@@ -197,6 +294,7 @@ function AppInner(): JSX.Element {
           worker.terminate();
           try {
             const model = deserializeModel(msg.result.model);
+            setRawXml(xml);
             onResult({ model }, msg.result.name);
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : 'Deserialize failed';
@@ -209,15 +307,46 @@ function AppInner(): JSX.Element {
 
         if (msg.type === 'error') {
           worker.terminate();
-          showToast(`Parse error: ${msg.message}`);
-          setLoading(false);
+          // DOMParser is unavailable in Web Workers on Safari < 15.4 — fall back to main-thread parse
+          if (msg.message.includes('DOMParser')) {
+            setLoadingMessage('Parsing…');
+            setTimeout(() => {
+              try {
+                const result = parseSclDocument(xml);
+                setRawXml(xml);
+                onResult(result, file.name);
+              } catch (err) {
+                showToast(`Parse error: ${err instanceof Error ? err.message : String(err)}`);
+              } finally {
+                setLoading(false);
+              }
+            }, 0);
+          } else {
+            showToast(`Parse error: ${msg.message}`);
+            setLoading(false);
+          }
         }
       };
 
       worker.onerror = (err) => {
         worker.terminate();
-        showToast(`Worker error: ${err.message}`);
-        setLoading(false);
+        // Same fallback for onerror (e.g. worker script fails to load on some browsers)
+        if (err.message?.includes('DOMParser')) {
+          setLoadingMessage('Parsing…');
+          setTimeout(() => {
+            try {
+              const result = parseSclDocument(xml);
+              onResult(result, file.name);
+            } catch (parseErr) {
+              showToast(`Parse error: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+            } finally {
+              setLoading(false);
+            }
+          }, 0);
+        } else {
+          showToast(`Worker error: ${err.message}`);
+          setLoading(false);
+        }
       };
 
       worker.postMessage({ type: 'parse', xml, name: file.name });
@@ -328,17 +457,51 @@ function AppInner(): JSX.Element {
   }
 
   const centerViewItems: Array<{ id: typeof appMode; label: string; icon: string }> = [
+    { id: 'dashboard', label: 'Dashboard', icon: '◈' },
     { id: 'visualizer', label: 'Graph', icon: '⬡' },
     { id: 'issues', label: 'Validation', icon: '✓' },
-    { id: 'compare', label: 'Compare', icon: '⟷' },
     { id: 'network', label: 'Network', icon: '⋯' },
     { id: 'statistics', label: 'Statistics', icon: '≡' },
     { id: 'addresses', label: 'Addresses', icon: '⊞' },
+    { id: 'ied', label: 'IED', icon: '◈' },
+    { id: 'version', label: 'Version', icon: '◑' },
   ];
+
+  function handleCompareClick() {
+    if (model && fileName) {
+      setAssignDialog({ fileName });
+    }
+  }
+
+  function handleAssign(slot: 'A' | 'B') {
+    const source = pendingCompareFirst ?? (model && fileName ? { result: { model }, name: fileName } : null);
+    if (!source) return;
+    setAssignDialog(null);
+    setPendingCompareFirst(null);
+    if (slot === 'A') {
+      applyParsedBaseline(source.result, source.name, () => setSelectedChangeId(null));
+      setPendingCompareSlot('B');
+    } else {
+      applyParsedNew(source.result, source.name, () => setSelectedChangeId(null));
+      setPendingCompareSlot('A');
+    }
+    compareSecondInputRef.current?.click();
+  }
+
+  function handleViewCompareFile(which: 'A' | 'B') {
+    setCompareViewFile(which);
+    if (appMode === 'compare') setAppMode('visualizer');
+  }
+
+  function handleExitCompare() {
+    setCompareViewFile(null);
+    setCompareVariant('single');
+    setAppMode('visualizer');
+  }
 
   // canvas tabs keep sidebars; report tabs auto-collapse them
   // Network has its own internal ThreePaneLayout so outer sidebars waste space
-  const isReportTab = appMode === 'issues' || appMode === 'compare' || appMode === 'statistics' || appMode === 'network' || appMode === 'addresses';
+  const isReportTab = appMode === 'issues' || appMode === 'compare' || appMode === 'statistics' || appMode === 'dashboard' || appMode === 'network' || appMode === 'addresses' || appMode === 'ied' || appMode === 'version';
 
   return (
     <div className="app-shell-v2">
@@ -351,8 +514,11 @@ function AppInner(): JSX.Element {
           const file = e.target.files?.[0];
           if (file) {
             readFile(file, (result, name) => {
-              setAppMode('visualizer');
               applyParsedMain(result, name);
+              if (result.model) {
+                setPendingLastSession({ fileName: name, ieds: result.model.ieds.length, ts: Date.now() });
+                setAppMode('dashboard');
+              }
             });
           }
         }}
@@ -381,12 +547,40 @@ function AppInner(): JSX.Element {
           }
         }}
       />
+      {/* Second file for compare flow */}
+      <input
+        ref={compareSecondInputRef}
+        type="file"
+        accept=".scd,.xml,.cid,.icd"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          const slot = pendingCompareSlot;
+          setPendingCompareSlot(null);
+          readFile(file, (result, name) => {
+            if (slot === 'B') {
+              applyParsedNew(result, name, () => setSelectedChangeId(null));
+            } else {
+              applyParsedBaseline(result, name, () => setSelectedChangeId(null));
+            }
+            setCompareVariant('compare');
+            setCompareViewFile(null);
+            setAppMode('compare');
+          });
+        }}
+      />
 
       <TopBar
         appMode={appMode}
-        issueCount={vstate.issues.length}
-        fileName={appMode === 'compare' ? `${baselineName || 'A ?'} vs ${newName || 'B ?'}` : fileName}
-        onSetAppMode={setAppMode}
+        issueCount={filteredIssues.length}
+        fileName={fileName}
+        fileType={fileType}
+        locked={locked}
+        onSetAppMode={(mode) => {
+          if (mode === 'issues') vdispatch({ type: 'set-validation-sub-view', payload: 'matrix' });
+          setAppMode(mode);
+        }}
         onOpenFile={() => fileInputRef.current?.click()}
         onLoadExample={(path) => void loadExample(path)}
         onOpenCommand={() => setCommandOpen(true)}
@@ -396,34 +590,53 @@ function AppInner(): JSX.Element {
         onExportProtocolSummaryCsv={exportProtocolSummary}
         onExportLandsnetJson={exportLandsnetJson}
         onExportExcelIp={exportExcelIp}
+        isCompareMode={isCompareMode}
+        baselineName={baselineName}
+        newName={newName}
+        compareViewFile={compareViewFile}
+        onCompare={handleCompareClick}
+        onViewCompareFile={handleViewCompareFile}
+        onExitCompare={handleExitCompare}
+      />
+      {assignDialog && (
+        <CompareAssignDialog
+          fileName={assignDialog.fileName}
+          onAssign={handleAssign}
+          onCancel={() => setAssignDialog(null)}
+        />
+      )}
+
+      {/* Startup compare file input */}
+      <input
+        ref={startupCompareInputRef}
+        type="file"
+        accept=".scd,.xml,.cid,.icd"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          readFile(file, (result, name) => {
+            setPendingCompareFirst({ result, name });
+            setAssignDialog({ fileName: name });
+          });
+          e.target.value = '';
+        }}
       />
 
       {!model && !error ? (
-        <EmptyState
-          ariaLabel="No file loaded"
-          title="Load an SCL file"
-          description="Open an IEC 61850 SCL/SCD file to visualize the configuration, run validation, and compare versions."
-          actions={
-            <>
-              <Button variant="primary" onClick={() => fileInputRef.current?.click()}>
-                Load file
-              </Button>
-              <select
-                className="input"
-                defaultValue=""
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (!value) return;
-                  void loadExample(value);
-                  e.target.value = '';
-                }}
-              >
-                <option value="" disabled>Or load an example</option>
-                <option value="/examples/example-basic.scd">Example 1 – Basic GOOSE/SV</option>
-                <option value="/examples/example-unresolved.scd">Example 2 – Unresolved links</option>
-              </select>
-            </>
-          }
+        <StartupScreen
+          onLoadFile={() => fileInputRef.current?.click()}
+          onLoadCompare={() => startupCompareInputRef.current?.click()}
+          onLoadExample={(path) => void loadExample(path)}
+          onDropFile={(file) => {
+            readFile(file, (result, name) => {
+              applyParsedMain(result, name);
+              if (result.model) {
+                setPendingLastSession({ fileName: name, ieds: result.model.ieds.length, ts: Date.now() });
+                setAppMode('dashboard');
+              }
+            });
+          }}
         />
       ) : (
         <div className="app-main">
@@ -458,6 +671,20 @@ function AppInner(): JSX.Element {
               )}
               center={(
                 <div className="center-panel-wrap">
+                  {/* Compare: viewing A or B */}
+                  {compareViewFile && (
+                    <div className="compare-view-banner">
+                      <span className={`compare-view-badge compare-view-badge-${compareViewFile.toLowerCase()}`}>
+                        {compareViewFile === 'A' ? 'A — Old file' : 'B — New file'}
+                      </span>
+                      <span className="compare-view-name">
+                        {compareViewFile === 'A' ? (baselineName || '') : (newName || '')}
+                      </span>
+                      <button className="btn compare-view-back" onClick={() => { setCompareViewFile(null); setAppMode('compare'); }}>
+                        ← Back to diff
+                      </button>
+                    </div>
+                  )}
                   {/* View switcher */}
                   <div className="center-view-bar">
                     {centerViewItems.map((item) => (
@@ -617,35 +844,55 @@ function AppInner(): JSX.Element {
                     </>
                   ) : null}
 
+                  {/* Dashboard */}
+                  {appMode === 'dashboard' ? (
+                    <DashboardWorkspace
+                      model={activeModel}
+                      issues={stableIssues}
+                      fileName={fileName}
+                      onNavigate={(mode) => {
+                        if (mode === 'issues') vdispatch({ type: 'set-validation-sub-view', payload: 'matrix' });
+                        setAppMode(mode);
+                      }}
+                    />
+                  ) : null}
+
                   {/* Validation / Issues view */}
                   {appMode === 'issues' ? (
                     <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                       <div className="validation-view-tabs" style={{ display: 'flex', gap: 4, padding: '4px 8px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
                         <button
-                          className={`center-view-btn ${vstate.validationSubView !== 'matrix' ? 'active' : ''}`}
-                          onClick={() => vdispatch({ type: 'set-validation-sub-view', payload: 'list' })}
-                        >Issues list</button>
-                        <button
                           className={`center-view-btn ${vstate.validationSubView === 'matrix' ? 'active' : ''}`}
                           onClick={() => vdispatch({ type: 'set-validation-sub-view', payload: 'matrix' })}
                         >Matrix</button>
+                        <button
+                          className={`center-view-btn ${vstate.validationSubView !== 'matrix' ? 'active' : ''}`}
+                          onClick={() => vdispatch({ type: 'set-validation-sub-view', payload: 'list' })}
+                        >Issues list</button>
                       </div>
                       {vstate.validationSubView === 'matrix' && activeModel ? (
                         <ValidationMatrix
                           model={activeModel}
                           landsnetReport={landsnetReport}
+                          schemaIssues={filteredIssues.filter(i => i.code.startsWith('SCL_XSD'))}
                           selectedIedName={selectedIedName}
                           onSelectIed={selectIed}
+                          waivedChecks={waivedChecks}
+                          onToggleWaive={toggleWaive}
+                          onDrillDown={(code) => {
+                            vdispatch({ type: 'set-filter', payload: { query: code } });
+                            vdispatch({ type: 'set-validation-sub-view', payload: 'list' });
+                          }}
                         />
                       ) : (
                         <IssuesWorkspace
-                          issues={vstate.issues}
+                          issues={filteredIssues}
                           selectedIssueId={vstate.selectedIssueId}
                           filters={vstate.filters}
                           onFilterChange={(next) => vdispatch({ type: 'set-filter', payload: next })}
                           onSelectIssue={(id) => {
                             vdispatch({ type: 'select-issue', payload: id });
-                            const issue = vstate.issues.find((i) => i.id === id);
+                            const issue = filteredIssues.find((i) => i.id === id);
                             const iedName = issue?.entityRef.iedName || issue?.context.iedName;
                             if (iedName) {
                               dispatch({ type: 'set-focus', payload: iedName });
@@ -653,7 +900,7 @@ function AppInner(): JSX.Element {
                             }
                           }}
                           onOpenInGraph={(id) => {
-                            const issue = vstate.issues.find((i) => i.id === id);
+                            const issue = filteredIssues.find((i) => i.id === id);
                             const iedName = issue?.entityRef.iedName || issue?.context.iedName;
                             if (!iedName) return;
                             dispatch({ type: 'set-focus', payload: iedName });
@@ -661,8 +908,8 @@ function AppInner(): JSX.Element {
                             dispatch({ type: 'request-fit' });
                             setAppMode('visualizer');
                           }}
-                          onExportJson={() => exportBlob(JSON.stringify(vstate.issues, null, 2), 'validation-report.json', 'application/json')}
-                          onExportCsv={() => exportBlob(validationCsv(vstate.issues), 'validation-report.csv', 'text/csv;charset=utf-8;')}
+                          onExportJson={() => exportBlob(JSON.stringify(filteredIssues, null, 2), 'validation-report.json', 'application/json')}
+                          onExportCsv={() => exportBlob(validationCsv(filteredIssues), 'validation-report.csv', 'text/csv;charset=utf-8;')}
                           onExportLandsnetJson={exportLandsnetJson}
                           onShowToast={showToast}
                         />
@@ -724,6 +971,22 @@ function AppInner(): JSX.Element {
                     <AddressesTable model={activeModel} />
                   ) : appMode === 'addresses' ? (
                     <div style={{ padding: 24 }}><p className="hint">Load an SCD file to view addresses.</p></div>
+                  ) : null}
+
+                  {/* IED Explorer */}
+                  {appMode === 'ied' && activeModel ? (
+                    <IedExplorer model={activeModel} />
+                  ) : appMode === 'ied' ? (
+                    <div style={{ padding: 24 }}><p className="hint">Load an SCD file to explore IEDs.</p></div>
+                  ) : null}
+
+                  {/* Version / History */}
+                  {appMode === 'version' ? (
+                    <VersionPanel
+                      header={activeModel?.header}
+                      fileName={compareViewFile === 'A' ? baselineName : compareViewFile === 'B' ? newName : fileName}
+                      fileType={fileType}
+                    />
                   ) : null}
                 </div>
               )}

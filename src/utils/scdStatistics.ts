@@ -1,4 +1,4 @@
-import type { SclModel } from '../model/types';
+import type { HitemModel, SclModel } from '../model/types';
 
 export interface SummaryStats {
   ieds: number;
@@ -77,6 +77,22 @@ export interface SignalsStats {
   smvSignals: number;
 }
 
+export interface IedTrafficRow {
+  iedName: string;
+  gooseOut: number;
+  gooseIn: number;
+  svOut: number;
+  svIn: number;
+  reportOut: number;
+  datasets: number;
+  /**
+   * Heuristic estimated bandwidth in Mbps.
+   * GOOSE = 250B×10fps per published control block
+   * SV    = 220B×4000fps per published/incoming sampled value control block
+   */
+  estMbps: number;
+}
+
 export interface ScdStatistics {
   summary: SummaryStats;
   system: SystemStats;
@@ -85,6 +101,8 @@ export interface ScdStatistics {
   smv: SmvStats;
   datasets: DatasetStats;
   signals: SignalsStats;
+  iedTraffic: IedTrafficRow[];
+  revisionHistory: HitemModel[];
   lists: {
     ips: string[];
     macs: string[];
@@ -223,6 +241,9 @@ export function computeScdStatistics(model: SclModel | undefined): ScdStatistics
     }
   }
 
+  const iedTraffic = computeIedTrafficStats(model);
+  const revisionHistory: HitemModel[] = model.header?.history ?? [];
+
   return {
     summary: {
       ieds: ieds.length,
@@ -290,6 +311,8 @@ export function computeScdStatistics(model: SclModel | undefined): ScdStatistics
       gooseSignals,
       smvSignals,
     },
+    iedTraffic,
+    revisionHistory,
     lists: {
       ips: allIps,
       macs: allMacs,
@@ -299,4 +322,50 @@ export function computeScdStatistics(model: SclModel | undefined): ScdStatistics
       iedNames: ieds.map((i) => i.name).sort(),
     },
   };
+}
+
+function computeIedTrafficStats(model: SclModel): IedTrafficRow[] {
+  const gooseOut = new Map<string, number>();
+  const svOut = new Map<string, number>();
+  const reportOut = new Map<string, number>();
+  const datasets = new Map<string, number>();
+
+  for (const g of model.gseControls) gooseOut.set(g.iedName, (gooseOut.get(g.iedName) ?? 0) + 1);
+  for (const s of model.svControls) svOut.set(s.iedName, (svOut.get(s.iedName) ?? 0) + 1);
+  for (const r of model.reportControls) reportOut.set(r.iedName, (reportOut.get(r.iedName) ?? 0) + 1);
+  for (const ds of model.dataSets) datasets.set(ds.iedName, (datasets.get(ds.iedName) ?? 0) + 1);
+
+  const gooseIn = new Map<string, number>();
+  const svIn = new Map<string, number>();
+  for (const e of model.edges) {
+    if (e.signalType === 'GOOSE') gooseIn.set(e.subscriberIed, (gooseIn.get(e.subscriberIed) ?? 0) + 1);
+    if (e.signalType === 'SV') svIn.set(e.subscriberIed, (svIn.get(e.subscriberIed) ?? 0) + 1);
+  }
+
+  const rows: IedTrafficRow[] = model.ieds.map((ied) => {
+    const goOut = gooseOut.get(ied.name) ?? 0;
+    const svOutV = svOut.get(ied.name) ?? 0;
+    const goIn = gooseIn.get(ied.name) ?? 0;
+    const svInV = svIn.get(ied.name) ?? 0;
+    const reportOutV = reportOut.get(ied.name) ?? 0;
+    const dsCount = datasets.get(ied.name) ?? 0;
+
+    const estMbps =
+      (goOut * 250 * 8 * 10) / 1_000_000 +
+      (svOutV * 220 * 8 * 4000) / 1_000_000 +
+      (svInV * 220 * 8 * 4000) / 1_000_000;
+
+    return {
+      iedName: ied.name,
+      gooseOut: goOut,
+      gooseIn: goIn,
+      svOut: svOutV,
+      svIn: svInV,
+      reportOut: reportOutV,
+      datasets: dsCount,
+      estMbps: Math.round(estMbps * 100) / 100,
+    };
+  });
+
+  return rows.sort((a, b) => b.estMbps - a.estMbps);
 }

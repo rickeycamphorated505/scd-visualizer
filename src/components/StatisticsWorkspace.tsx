@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
-import type { SclModel } from '../model/types';
-import { computeScdStatistics } from '../utils/scdStatistics';
+import { useEffect, useMemo, useState } from 'react';
+import type { HitemModel, SclModel } from '../model/types';
+import { computeScdStatistics, type IedTrafficRow } from '../utils/scdStatistics';
 
 interface StatisticsWorkspaceProps {
   model: SclModel | undefined;
@@ -63,6 +63,191 @@ function DictTable({ data }: { data: Record<string, number> }): JSX.Element {
   );
 }
 
+interface HBarProps {
+  rows: Array<{ label: string; value: number }>;
+  color: string;
+  unit?: string;
+  maxRows?: number;
+  animateOnMount?: boolean;
+}
+
+function formatHBarValue(value: number, unit?: string): string {
+  if (!unit) return value.toFixed(0);
+  if (unit === 'Mbps') return `${value.toFixed(2)} Mbps`;
+  return `${Math.round(value)} ${unit}`;
+}
+
+function HorizontalBarChart({
+  rows,
+  color,
+  unit,
+  maxRows = 25,
+  animateOnMount = true,
+}: HBarProps): JSX.Element {
+  const visibleRows = rows
+    .slice()
+    .sort((a, b) => b.value - a.value)
+    .slice(0, maxRows);
+
+  const maxValue = visibleRows.reduce((m, r) => Math.max(m, r.value), 0) || 1;
+  const rowH = 26;
+
+  const [animate, setAnimate] = useState(false);
+  useEffect(() => {
+    if (!animateOnMount) return;
+    const id = requestAnimationFrame(() => {
+      window.setTimeout(() => setAnimate(true), 50);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [animateOnMount]);
+
+  const clipId = useMemo(() => `hbar-clip-${Math.random().toString(16).slice(2)}`, []);
+  const LABEL_W = 190;
+  const TOTAL_W = 560;
+  const VALUE_W = 120;
+  const BAR_W = TOTAL_W - LABEL_W - VALUE_W;
+
+  return (
+    <svg
+      className={`hbar-svg ${animate ? 'hbar-animate' : ''}`}
+      viewBox={`0 0 ${TOTAL_W} ${Math.max(1, visibleRows.length) * rowH}`}
+      width="100%"
+      preserveAspectRatio="none"
+      aria-label="Horizontal bar chart"
+    >
+      <defs>
+        {visibleRows.map((r, i) => {
+          const y = i * rowH;
+          return (
+            <clipPath key={r.label} id={`${clipId}-${i}`}>
+              <rect x={0} y={y} width={LABEL_W} height={rowH} />
+            </clipPath>
+          );
+        })}
+      </defs>
+
+      {visibleRows.length === 0 ? (
+        <text x={LABEL_W} y={rowH / 2} fontSize="12" fill="var(--muted)" textAnchor="start">
+          No data
+        </text>
+      ) : null}
+
+      {visibleRows.map((r, i) => {
+        const y = i * rowH;
+        const w = r.value > 0 ? Math.max(2, (r.value / maxValue) * BAR_W) : 0;
+        const valueText = formatHBarValue(r.value, unit);
+
+        return (
+          <g key={`${r.label}:${r.value}`} transform={`translate(0, ${y})`}>
+            <text
+              x={8}
+              y={18}
+              fontSize={12}
+              fill="var(--text-secondary)"
+              clipPath={`url(#${clipId}-${i})`}
+            >
+              <title>{r.label}</title>
+              {r.label}
+            </text>
+
+            <rect
+              className="hbar-bar"
+              x={LABEL_W}
+              y={7}
+              width={w}
+              height={12}
+              rx={4}
+              fill={color}
+              style={{
+                transitionDelay: `${i * 10}ms`,
+              }}
+            />
+
+            <text x={LABEL_W + BAR_W + 8} y={18} fontSize={11} fill="var(--muted)">
+              {valueText}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function DatasetSizeHistogram({ dataSets }: { dataSets: Array<{ fcdas: unknown[] }> }): JSX.Element {
+  const [animate, setAnimate] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      window.setTimeout(() => setAnimate(true), 50);
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const buckets = useMemo(
+    () => [
+      { key: '1', label: '1', span: 1, test: (n: number) => n === 1 },
+      { key: '2-5', label: '2–5', span: 4, test: (n: number) => n >= 2 && n <= 5 },
+      { key: '6-10', label: '6–10', span: 5, test: (n: number) => n >= 6 && n <= 10 },
+      { key: '11-20', label: '11–20', span: 10, test: (n: number) => n >= 11 && n <= 20 },
+      { key: '21-50', label: '21–50', span: 30, test: (n: number) => n >= 21 && n <= 50 },
+      { key: '51+', label: '51+', span: 15, test: (n: number) => n >= 51 },
+    ],
+    [],
+  );
+
+  const counts = useMemo(() => {
+    const sizes = dataSets.map((ds) => ds.fcdas.length);
+    return buckets.map((b) => sizes.reduce((s, n) => s + (b.test(n) ? 1 : 0), 0));
+  }, [buckets, dataSets]);
+
+  const maxCount = Math.max(...counts, 0);
+  const W = 640;
+  const H = 170;
+  const baseY = 125;
+  const maxH = 80;
+  const padding = 10;
+  const gap = 10;
+  const totalSpan = buckets.reduce((s, b) => s + b.span, 0) || 1;
+  const colAreaW = W - padding * 2 - gap * (buckets.length - 1);
+
+  let x = padding;
+  return (
+    <div>
+      <svg className={`stats-histogram ${animate ? 'stats-histogram-animate' : ''}`} viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="none">
+        {counts.map((c, i) => {
+          const b = buckets[i];
+          const colW = (colAreaW * b.span) / totalSpan;
+          const h = maxCount > 0 ? (c / maxCount) * maxH : 0;
+          const y = baseY - h;
+
+          const rectX = x;
+          x += colW + gap;
+
+          return (
+            <g key={b.key}>
+              <rect
+                className="stats-histogram-col"
+                x={rectX}
+                y={y}
+                width={Math.max(2, colW)}
+                height={h}
+                rx={6}
+                fill="var(--mms)"
+                style={{ transitionDelay: `${i * 70}ms` }}
+              />
+              <text x={rectX + colW / 2} y={Math.max(12, y - 6)} textAnchor="middle" fontSize="11" fill="var(--text-secondary)">
+                {c}
+              </text>
+              <text x={rectX + colW / 2} y={H - 16} textAnchor="middle" fontSize="11" fill="var(--muted)">
+                {b.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 function ListBlock({ items, title, id }: { items: string[]; title: string; id: string }): JSX.Element {
   return (
     <div className="stats-list-block">
@@ -79,6 +264,11 @@ function ListBlock({ items, title, id }: { items: string[]; title: string; id: s
 
 export default function StatisticsWorkspace({ model }: StatisticsWorkspaceProps): JSX.Element {
   const stats = useMemo(() => computeScdStatistics(model), [model]);
+  const [showAllRevisions, setShowAllRevisions] = useState(false);
+
+  useEffect(() => {
+    setShowAllRevisions(false);
+  }, [model]);
 
   if (!model) {
     return (
@@ -96,7 +286,62 @@ export default function StatisticsWorkspace({ model }: StatisticsWorkspaceProps)
     );
   }
 
-  const { summary, system, network, goose, smv, datasets, signals, lists } = stats;
+  const { summary, system, network, goose, smv, datasets, signals, iedTraffic, revisionHistory, lists } = stats;
+
+  const revisionLatestFirst = useMemo(() => {
+    return [...revisionHistory].reverse();
+  }, [revisionHistory]);
+
+  const revisionVisible = showAllRevisions ? revisionLatestFirst : revisionLatestFirst.slice(0, 20);
+
+  const iedTrafficBandwidthRows = useMemo(
+    () =>
+      iedTraffic.map((r: IedTrafficRow) => ({
+        label: r.iedName,
+        value: r.estMbps,
+      })),
+    [iedTraffic],
+  );
+  const iedTrafficPublishedRows = useMemo(
+    () =>
+      iedTraffic.map((r: IedTrafficRow) => ({
+        label: r.iedName,
+        value: r.gooseOut + r.svOut + r.reportOut,
+      })),
+    [iedTraffic],
+  );
+  const iedTrafficIncomingRows = useMemo(
+    () =>
+      iedTraffic.map((r: IedTrafficRow) => ({
+        label: r.iedName,
+        value: r.gooseIn + r.svIn,
+      })),
+    [iedTraffic],
+  );
+
+  const datasetSizeData = useMemo(() => model.dataSets.map((ds) => ({ fcdas: ds.fcdas })), [model]);
+
+  const gooseByIedRows = useMemo(
+    () =>
+      Object.entries(goose.byIed)
+        .map(([label, value]) => ({ label, value }))
+        .sort((a, b) => b.value - a.value),
+    [goose.byIed],
+  );
+  const smvByIedRows = useMemo(
+    () =>
+      Object.entries(smv.byIed)
+        .map(([label, value]) => ({ label, value }))
+        .sort((a, b) => b.value - a.value),
+    [smv.byIed],
+  );
+  const datasetsPerIedRows = useMemo(
+    () =>
+      Object.entries(datasets.perIed)
+        .map(([label, value]) => ({ label, value }))
+        .sort((a, b) => b.value - a.value),
+    [datasets.perIed],
+  );
 
   return (
     <section className="panel stats-workspace">
@@ -143,6 +388,18 @@ export default function StatisticsWorkspace({ model }: StatisticsWorkspaceProps)
           </div>
         </Section>
 
+        <Section title="IED Traffic (Estimated)">
+          <h4>Estimated bandwidth per IED</h4>
+          <HorizontalBarChart rows={iedTrafficBandwidthRows} color="var(--sv)" unit="Mbps" maxRows={25} />
+          <p className="hint">GOOSE = 250B×10fps &nbsp;|&nbsp; SV = 220B×4000fps per control block</p>
+
+          <h4>Published control blocks per IED</h4>
+          <HorizontalBarChart rows={iedTrafficPublishedRows} color="var(--goose)" unit="ctrl" maxRows={25} />
+
+          <h4>Incoming subscriptions per IED</h4>
+          <HorizontalBarChart rows={iedTrafficIncomingRows} color="var(--mms)" unit="subs" maxRows={25} />
+        </Section>
+
         <Section title="GOOSE">
           <div className="stat-cards stat-cards-compact">
             <StatCard label="Control blocks" value={goose.controlBlocks} />
@@ -157,7 +414,10 @@ export default function StatisticsWorkspace({ model }: StatisticsWorkspaceProps)
             </p>
           ) : null}
           <div className="stats-dict-grid">
-            <div><h4>By IED</h4><DictTable data={goose.byIed} /></div>
+            <div>
+              <h4>By IED</h4>
+              <HorizontalBarChart rows={gooseByIedRows} color="var(--goose)" unit="ctrl" />
+            </div>
             <div><h4>By VLAN</h4><DictTable data={goose.byVlan} /></div>
             <div><h4>By APPID</h4><DictTable data={goose.byAppId} /></div>
           </div>
@@ -176,7 +436,10 @@ export default function StatisticsWorkspace({ model }: StatisticsWorkspaceProps)
             </p>
           ) : null}
           <div className="stats-dict-grid">
-            <div><h4>By IED</h4><DictTable data={smv.byIed} /></div>
+            <div>
+              <h4>By IED</h4>
+              <HorizontalBarChart rows={smvByIedRows} color="var(--sv)" unit="ctrl" />
+            </div>
             <div><h4>By VLAN</h4><DictTable data={smv.byVlan} /></div>
             <div><h4>By APPID</h4><DictTable data={smv.byAppId} /></div>
           </div>
@@ -190,8 +453,12 @@ export default function StatisticsWorkspace({ model }: StatisticsWorkspaceProps)
             <StatCard label="Max entries (dataset)" value={datasets.maxCount} />
             <StatCard label="Avg per dataset" value={datasets.avgPerDataset} />
           </div>
+          <h4>Dataset size distribution</h4>
+          <div className="stats-histogram-wrap">
+            <DatasetSizeHistogram dataSets={datasetSizeData} />
+          </div>
           <h4>Datasets per IED</h4>
-          <DictTable data={datasets.perIed} />
+          <HorizontalBarChart rows={datasetsPerIedRows} color="var(--mms)" unit="ds" />
         </Section>
 
         <Section title="Signals">
@@ -202,6 +469,39 @@ export default function StatisticsWorkspace({ model }: StatisticsWorkspaceProps)
             <StatCard label="Data objects (types)" value={signals.dataObjects} />
             <StatCard label="Data attributes (types)" value={signals.dataAttributes} />
           </div>
+        </Section>
+
+        <Section title="SCD Revision History" defaultOpen={false}>
+          {revisionHistory.length === 0 ? (
+            <p className="hint">No revision history in this file.</p>
+          ) : (
+            <>
+              {revisionHistory.length > 20 ? (
+                <div style={{ marginBottom: 'var(--space-3)' }}>
+                  <button className="btn" type="button" onClick={() => setShowAllRevisions((v) => !v)}>
+                    {showAllRevisions ? `Show latest 20 revisions` : `Show all ${revisionHistory.length} revisions`}
+                  </button>
+                </div>
+              ) : null}
+              <div className="stats-timeline">
+                {revisionVisible.map((h: HitemModel, idx: number) => {
+                  const isLatest = idx === 0;
+                  return (
+                    <div key={`${h.version ?? 'v'}:${h.revision ?? 'r'}:${idx}`} className="stats-timeline-row">
+                      <span className={`stats-timeline-dot ${isLatest ? 'stats-timeline-dot-latest' : ''}`} />
+                      <span className={`stats-timeline-badge ${isLatest ? 'stats-timeline-badge-latest' : ''}`}>
+                        v{h.version ?? '-'} R{h.revision ?? '-'}
+                      </span>
+                      <span className="stats-timeline-what">{h.what ?? '-'}</span>
+                      <span className="stats-timeline-when">
+                        {h.when ?? '-'} — {h.who ?? '-'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </Section>
 
         <Section title="Lists">
