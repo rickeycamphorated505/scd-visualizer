@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import type { HitemModel, SclModel } from '../model/types';
 import { computeScdStatistics, type IedTrafficRow } from '../utils/scdStatistics';
 
@@ -73,7 +73,7 @@ interface HBarProps {
 
 function formatHBarValue(value: number, unit?: string): string {
   if (!unit) return value.toFixed(0);
-  if (unit === 'Mbps') return `${value.toFixed(2)} Mbps`;
+  if (unit === 'MB/s') return `${value.toFixed(2)} MB/s`;
   return `${Math.round(value)} ${unit}`;
 }
 
@@ -101,7 +101,8 @@ function HorizontalBarChart({
     return () => cancelAnimationFrame(id);
   }, [animateOnMount]);
 
-  const clipId = useMemo(() => `hbar-clip-${Math.random().toString(16).slice(2)}`, []);
+  const uid = useId();
+  const clipId = `hbar-clip-${uid.replace(/:/g, '')}`;
   const LABEL_W = 190;
   const TOTAL_W = 560;
   const VALUE_W = 120;
@@ -390,7 +391,7 @@ export default function StatisticsWorkspace({ model }: StatisticsWorkspaceProps)
 
         <Section title="IED Traffic (Estimated)">
           <h4>Estimated bandwidth per IED</h4>
-          <HorizontalBarChart rows={iedTrafficBandwidthRows} color="var(--sv)" unit="Mbps" maxRows={25} />
+          <HorizontalBarChart rows={iedTrafficBandwidthRows} color="var(--sv)" unit="MB/s" maxRows={25} />
           <p className="hint">GOOSE = 250B×10fps &nbsp;|&nbsp; SV = 220B×4000fps per control block</p>
 
           <h4>Published control blocks per IED</h4>

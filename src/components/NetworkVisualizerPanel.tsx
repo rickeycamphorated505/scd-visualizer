@@ -590,15 +590,15 @@ export default function NetworkVisualizerPanel({
               <div className="net-traffic-legend-title">Traffic</div>
               <div className="net-traffic-legend-row">
                 <span className="net-traffic-legend-line" style={{ background: 'var(--mms)' }} />
-                <span>— &lt; 1 Mbps</span>
+                <span>— &lt; 1 MB/s</span>
               </div>
               <div className="net-traffic-legend-row">
                 <span className="net-traffic-legend-line" style={{ background: 'var(--goose)' }} />
-                <span>— 1–10 Mbps</span>
+                <span>— 1–10 MB/s</span>
               </div>
               <div className="net-traffic-legend-row">
                 <span className="net-traffic-legend-line" style={{ background: 'var(--sv)' }} />
-                <span>— 10+ Mbps</span>
+                <span>— 10+ MB/s</span>
               </div>
               <div className="net-traffic-legend-divider" />
               <div className="net-traffic-legend-squares">
@@ -1085,7 +1085,7 @@ function estimateFlowKbps(item: PortFlowItem): number {
 
 function formatRate(kbps: number): string {
   if (kbps >= 1000) {
-    return `${(kbps / 1000).toFixed(2)} Mbps`;
+    return `${(kbps / 1000).toFixed(2)} MB/s`;
   }
   return `${kbps.toFixed(1)} kbps`;
 }

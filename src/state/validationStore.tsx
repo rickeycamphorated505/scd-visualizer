@@ -25,7 +25,7 @@ const initialState: ValidationState = {
     status: 'all',
     query: '',
   },
-  validationSubView: 'list',
+  validationSubView: 'matrix',
 };
 
 function reducer(state: ValidationState, action: ValidationAction): ValidationState {

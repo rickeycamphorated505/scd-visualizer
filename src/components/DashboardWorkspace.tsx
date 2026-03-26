@@ -306,7 +306,7 @@ export default function DashboardWorkspace({ model, issues, fileName, onNavigate
           <div className="dashboard-section">
             <div className="dashboard-section-title">Protocol bandwidth</div>
             <div className="dashboard-bandwidth-row">
-              <svg width="120" height="120" viewBox="0 0 120 120" aria-label="Estimated Mbps donut">
+              <svg width="120" height="120" viewBox="0 0 120 120" aria-label="Estimated MB/s donut">
                 <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(148,163,184,0.25)" strokeWidth="18" />
 
                 {donutArcs.map((seg) => {
@@ -333,7 +333,7 @@ export default function DashboardWorkspace({ model, issues, fileName, onNavigate
                   {donut.total.toFixed(0)}
                 </text>
                 <text x="60" y="82" textAnchor="middle" fontSize="12" fill="var(--muted)">
-                  Mbps total
+                  MB/s total
                 </text>
               </svg>
 

@@ -20,7 +20,11 @@ export interface SerializedSclModel {
     lNodeTypes: Array<[string, { id: string; lnClass?: string; dos: { name: string; type: string }[] }]>;
     doTypes: Array<[string, { id: string; das: { name: string; fc?: string }[] }]>;
     daTypes: Array<[string, { id: string; bType?: string; bdas: { name: string; bType?: string }[] }]>;
+    enumTypes: Array<[string, { id: string; enumValCount: number }]>;
+    duplicateTypeIds: string[];
   };
+  header?: SclModel['header'];
+  sld?: SclModel['sld'];
 }
 
 function serializeModel(model: SclModel): SerializedSclModel {
@@ -38,10 +42,14 @@ function serializeModel(model: SclModel): SerializedSclModel {
     smvComms: model.smvComms,
     edges: model.edges,
     snippets: model.snippets,
+    header: model.header,
+    sld: model.sld,
     dataTypeTemplates: model.dataTypeTemplates ? {
       lNodeTypes: Array.from(model.dataTypeTemplates.lNodeTypes.entries()),
       doTypes: Array.from(model.dataTypeTemplates.doTypes.entries()),
       daTypes: Array.from(model.dataTypeTemplates.daTypes.entries()),
+      enumTypes: Array.from(model.dataTypeTemplates.enumTypes.entries()),
+      duplicateTypeIds: model.dataTypeTemplates.duplicateTypeIds,
     } : undefined,
   };
 }
@@ -61,10 +69,14 @@ export function deserializeModel(raw: SerializedSclModel): SclModel {
     smvComms: raw.smvComms,
     edges: raw.edges,
     snippets: raw.snippets,
+    header: raw.header,
+    sld: raw.sld,
     dataTypeTemplates: raw.dataTypeTemplates ? {
       lNodeTypes: new Map(raw.dataTypeTemplates.lNodeTypes),
       doTypes: new Map(raw.dataTypeTemplates.doTypes),
       daTypes: new Map(raw.dataTypeTemplates.daTypes),
+      enumTypes: new Map(raw.dataTypeTemplates.enumTypes ?? []),
+      duplicateTypeIds: raw.dataTypeTemplates.duplicateTypeIds ?? [],
     } : undefined,
   };
 }

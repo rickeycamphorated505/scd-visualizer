@@ -7,6 +7,7 @@ import {
   parseXml,
   snippetFor,
 } from './xml';
+import { parseSld } from '../sld/parseSld';
 import type {
   AccessPointModel,
   BayModel,
@@ -19,12 +20,14 @@ import type {
   FcdaModel,
   GooseControlModel,
   GseCommModel,
+  HitemModel,
   IedModel,
   LDeviceModel,
   LnModel,
   LNodeRefModel,
   ParseErrorInfo,
   ReportControlModel,
+  SclHeaderModel,
   SclModel,
   SmvCommModel,
   SubNetworkModel,
@@ -47,6 +50,7 @@ export function parseSclDocument(xmlText: string, onProgress?: (stage: string, c
     }
 
     const snippets: Record<string, string> = {};
+    const header = parseHeader(root);
     const ieds = parseIeds(root, snippets);
     onProgress?.('ieds', ieds.length);
     const { bays, substations } = parseBaysFromSubstation(root, snippets);
@@ -71,6 +75,9 @@ export function parseSclDocument(xmlText: string, onProgress?: (stage: string, c
       gseComms: communication.gseComms,
     });
 
+    let sld: ReturnType<typeof parseSld> | undefined;
+    try { sld = parseSld(doc) ?? undefined; } catch { sld = undefined; }
+
     return {
       model: {
         ieds,
@@ -78,6 +85,7 @@ export function parseSclDocument(xmlText: string, onProgress?: (stage: string, c
         substations,
         dataSets,
         dataTypeTemplates,
+        sld,
         gseControls,
         svControls,
         reportControls,
@@ -87,6 +95,7 @@ export function parseSclDocument(xmlText: string, onProgress?: (stage: string, c
         smvComms: communication.smvComms,
         edges,
         snippets,
+        header,
       },
     };
   } catch (error) {
@@ -95,6 +104,33 @@ export function parseSclDocument(xmlText: string, onProgress?: (stage: string, c
       error: typedError.info || { message: typedError.message || 'Unknown parse error' },
     };
   }
+}
+
+function parseHeader(root: Element): SclHeaderModel | undefined {
+  const headerEl = firstByTag(root, 'Header');
+  if (!headerEl) return undefined;
+  const historyEl = firstByTag(headerEl, 'History');
+  const history: HitemModel[] = historyEl
+    ? childrenByTag(historyEl, 'Hitem').map((el) => ({
+        version: getAttr(el, 'version') ?? undefined,
+        revision: getAttr(el, 'revision') ?? undefined,
+        when: getAttr(el, 'when') ?? undefined,
+        who: getAttr(el, 'who') ?? undefined,
+        what: getAttr(el, 'what') ?? undefined,
+        why: getAttr(el, 'why') ?? undefined,
+      }))
+    : [];
+  const helinksNs = root.lookupNamespaceURI('hlx');
+  const helinksLocked = helinksNs === 'http://www.helinks.com/SCL/Private';
+  return {
+    id: getAttr(headerEl, 'id') ?? undefined,
+    version: getAttr(headerEl, 'version') ?? undefined,
+    revision: getAttr(headerEl, 'revision') ?? undefined,
+    toolID: getAttr(headerEl, 'toolID') ?? undefined,
+    nameStructure: getAttr(headerEl, 'nameStructure') ?? undefined,
+    history,
+    helinksLocked,
+  };
 }
 
 function parseIeds(root: Element, snippets: Record<string, string>): IedModel[] {
@@ -323,21 +359,34 @@ function parseDataTypeTemplates(root: Element): DataTypeTemplatesModel | undefin
     lNodeTypes.set(id, { id, lnClass, dos });
   }
 
-  const doTypes = new Map<string, { id: string; das: { name: string; fc?: string }[] }>();
+  const seenIds = new Map<string, number>();
+  const trackId = (id: string) => seenIds.set(id, (seenIds.get(id) ?? 0) + 1);
+
+  for (const lnEl of childrenByTagLocal(dt, 'LNodeType')) {
+    const id = getAttr(lnEl, 'id') ?? getAttrByLocalName(lnEl, 'id') ?? '';
+    if (id) trackId(id);
+  }
+
+  const doTypes = new Map<string, { id: string; cdc?: string; das: { name: string; fc?: string; bType?: string; type?: string }[] }>();
   for (const doTypeEl of childrenByTagLocal(dt, 'DOType')) {
     const id = getAttr(doTypeEl, 'id') ?? getAttrByLocalName(doTypeEl, 'id') ?? '';
     if (!id) continue;
+    trackId(id);
+    const cdc = getAttr(doTypeEl, 'cdc') ?? getAttrByLocalName(doTypeEl, 'cdc') ?? undefined;
     const das = childrenByTagLocal(doTypeEl, 'DA').map((daEl) => ({
       name: getAttr(daEl, 'name') ?? getAttrByLocalName(daEl, 'name') ?? '',
       fc: getAttr(daEl, 'fc') ?? getAttrByLocalName(daEl, 'fc'),
+      bType: getAttr(daEl, 'bType') ?? getAttrByLocalName(daEl, 'bType') ?? undefined,
+      type: getAttr(daEl, 'type') ?? getAttrByLocalName(daEl, 'type') ?? undefined,
     })).filter((d) => d.name);
-    doTypes.set(id, { id, das });
+    doTypes.set(id, { id, cdc, das });
   }
 
   const daTypes = new Map<string, { id: string; bType?: string; bdas: { name: string; bType?: string }[] }>();
   for (const daTypeEl of childrenByTagLocal(dt, 'DAType')) {
     const id = getAttr(daTypeEl, 'id') ?? getAttrByLocalName(daTypeEl, 'id') ?? '';
     if (!id) continue;
+    trackId(id);
     const bType = getAttr(daTypeEl, 'bType') ?? getAttrByLocalName(daTypeEl, 'bType') ?? undefined;
     const bdas = childrenByTagLocal(daTypeEl, 'BDA').map((bdaEl) => ({
       name: getAttr(bdaEl, 'name') ?? getAttrByLocalName(bdaEl, 'name') ?? '',
@@ -346,7 +395,20 @@ function parseDataTypeTemplates(root: Element): DataTypeTemplatesModel | undefin
     daTypes.set(id, { id, bType, bdas });
   }
 
-  return { lNodeTypes, doTypes, daTypes };
+  const enumTypes = new Map<string, { id: string; enumValCount: number }>();
+  for (const enumEl of childrenByTagLocal(dt, 'EnumType')) {
+    const id = getAttr(enumEl, 'id') ?? getAttrByLocalName(enumEl, 'id') ?? '';
+    if (!id) continue;
+    trackId(id);
+    const enumValCount = childrenByTagLocal(enumEl, 'EnumVal').length;
+    enumTypes.set(id, { id, enumValCount });
+  }
+
+  const duplicateTypeIds = Array.from(seenIds.entries())
+    .filter(([, count]) => count > 1)
+    .map(([id]) => id);
+
+  return { lNodeTypes, doTypes, daTypes, enumTypes, duplicateTypeIds };
 }
 
 function parseGooseControls(root: Element, snippets: Record<string, string>): GooseControlModel[] {

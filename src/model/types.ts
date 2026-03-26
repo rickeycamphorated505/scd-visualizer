@@ -1,5 +1,27 @@
+import type { SldModel } from '../sld/types';
+export type { SldModel };
+
 export type ViewMode = 'tree' | 'network';
 export type SignalMode = 'both' | 'goose' | 'sv' | 'report';
+
+export interface HitemModel {
+  version?: string;
+  revision?: string;
+  when?: string;
+  who?: string;
+  what?: string;
+  why?: string;
+}
+
+export interface SclHeaderModel {
+  id?: string;
+  version?: string;
+  revision?: string;
+  toolID?: string;
+  nameStructure?: string;
+  history: HitemModel[];
+  helinksLocked: boolean;
+}
 
 export interface ParseErrorInfo {
   message: string;
@@ -215,8 +237,10 @@ export interface SubstationModel {
 /** DataTypeTemplates: LNodeType id → DO list; DOType id → DA list; DAType id → BDA list. */
 export interface DataTypeTemplatesModel {
   lNodeTypes: Map<string, { id: string; lnClass?: string; dos: { name: string; type: string }[] }>;
-  doTypes: Map<string, { id: string; das: { name: string; fc?: string }[] }>;
+  doTypes: Map<string, { id: string; cdc?: string; das: { name: string; fc?: string; bType?: string; type?: string }[] }>;
   daTypes: Map<string, { id: string; bType?: string; bdas: { name: string; bType?: string }[] }>;
+  enumTypes: Map<string, { id: string; enumValCount: number }>;
+  duplicateTypeIds: string[];
 }
 
 export interface SclModel {
@@ -237,6 +261,8 @@ export interface SclModel {
   edges: EdgeModel[];
   snippets: Record<string, string>;
   dataTypeTemplates?: DataTypeTemplatesModel;
+  sld?: SldModel;
+  header?: SclHeaderModel;
 }
 
 export interface TreeNodeModel {

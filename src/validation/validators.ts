@@ -5,8 +5,6 @@ import { runControlBlockRules } from './rules/controlBlockRules';
 import { runGooseRules } from './rules/gooseRules';
 import { runIdentityRules } from './rules/identityRules';
 import { runLandsnetRules } from './rules/landsnetRules';
-import { runSchemaValidation } from './schemaValidator';
-
 export type ValidatorFn = (model: SclModel) => ValidationIssue[] | Promise<ValidationIssue[]>;
 
 export const validators: ValidatorFn[] = [
@@ -18,9 +16,8 @@ export const validators: ValidatorFn[] = [
 ];
 
 export async function runValidators(model: SclModel): Promise<ValidationIssue[]> {
-  const schemaIssues = await runSchemaValidation();
   const issueBatches = await Promise.all(validators.map((fn) => fn(model)));
-  const merged = [...schemaIssues, ...issueBatches.flat()].map(normalizeIssue);
+  const merged = issueBatches.flat().map(normalizeIssue);
   const dedup = new Map<string, ValidationIssue>();
   for (const issue of merged) {
     dedup.set(issue.id, issue);

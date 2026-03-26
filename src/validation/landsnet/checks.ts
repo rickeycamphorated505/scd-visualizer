@@ -30,7 +30,6 @@ export const enum CheckCode {
   IEC_006 = 'IEC_006',
   IEC_007 = 'IEC_007',
   IEC_008 = 'IEC_008',
-  IEC_009 = 'IEC_009',
 }
 
 interface CheckInfo {
@@ -75,7 +74,6 @@ const CHECKS: CheckInfo[] = [
   { id: 24, code: CheckCode.IEC_006, title: 'DataTypeTemplates completeness' },
   { id: 25, code: CheckCode.IEC_007, title: 'GOOSE/SV dataset not empty' },
   { id: 26, code: CheckCode.IEC_008, title: 'confRev consistency' },
-  { id: 27, code: CheckCode.IEC_009, title: 'EW8** IEDs must have SV controls' },
 ];
 
 export function runLandsnetChecks(
@@ -93,15 +91,18 @@ export function runLandsnetChecks(
     codeSuffix: string;
     message: string;
     path: string;
+    fixHint?: string;
+    severity?: ValidationIssue['severity'];
     protocol?: ValidationIssue['protocol'];
     context?: ValidationIssue['context'];
     entityRef?: ValidationIssue['entityRef'];
   }): void => {
     const baseCode = checkCode(params.checkId);
     const code = `${baseCode}_${params.codeSuffix}`;
+    const hint = params.fixHint ?? '';
     issues.push({
       id: buildIssueId(code, `${params.path}:${params.message}`),
-      severity: 'error',
+      severity: params.severity ?? 'error',
       category: 'semantic',
       code,
       message: params.message,
@@ -110,8 +111,8 @@ export function runLandsnetChecks(
       context: params.context || {},
       entityRef: params.entityRef || { type: 'Unknown', id: code },
       resolved: false,
-      fixHint: `Check Landsnet compliance rule #${params.checkId}.`,
-      quickFix: `Check Landsnet compliance rule #${params.checkId}.`,
+      fixHint: hint,
+      quickFix: hint,
     });
     issueCountByCheck.set(params.checkId, (issueCountByCheck.get(params.checkId) || 0) + 1);
   };
@@ -131,6 +132,7 @@ export function runLandsnetChecks(
         codeSuffix: 'DUPLICATE_IED',
         message: `IED '${name}' appears ${count} times.`,
         path: `/SCL/IED[@name='${name}']`,
+        fixHint: `Rename one of the IEDs so every IED has a unique name.`,
         context: { iedName: name },
         entityRef: { type: 'IED', id: `ied:${name}`, iedName: name },
       });
@@ -164,6 +166,7 @@ export function runLandsnetChecks(
           codeSuffix: 'DUPLICATE_IP',
           message: `Duplicate IP '${ip}' found ${caps.length} times in SubNetwork '${subnet}'.`,
           path: `/SCL/Communication/SubNetwork[@name='${subnet}']`,
+          fixHint: `Assign a unique IP address to each Access Point within SubNetwork '${subnet}'.`,
           context: { ip },
           entityRef: { type: 'Communication', id: `subnet:${subnet}` },
         });
@@ -200,6 +203,8 @@ export function runLandsnetChecks(
         codeSuffix: 'OCTET_MISMATCH',
         message: `Station/SubNetwork '${station}' has multiple 3rd octets: ${Array.from(octets).sort((a, b) => a - b).join(', ')}.`,
         path: `/SCL/Communication`,
+        fixHint: `All IEDs in '${station}' should share the same 3rd IP octet (e.g. all on 192.168.X.*). Check for misconfigured addresses.`,
+        severity: 'warn',
         entityRef: { type: 'Communication', id: `station:${station}` },
       });
     }
@@ -217,6 +222,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 4,
           codeSuffix: 'IP_PROFILE',
+        fixHint: `Set netmask to 255.255.255.0 and gateway to 0.0.0.0 for this 192.168.* address.`,
           message: `${cap.iedName}/${cap.apName} with IP ${cap.ip} must use netmask 255.255.255.0 and gateway 0.0.0.0.`,
           path,
           context: { iedName: cap.iedName, apName: cap.apName, ip: cap.ip },
@@ -230,6 +236,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 5,
           codeSuffix: 'IP_PROFILE',
+        fixHint: `Set netmask to 255.255.255.0 and gateway to 0.0.0.0 for this 10.30.* address.`,
           message: `${cap.iedName}/${cap.apName} with IP ${cap.ip} must use netmask 255.255.255.0 and gateway 0.0.0.0.`,
           path,
           context: { iedName: cap.iedName, apName: cap.apName, ip: cap.ip },
@@ -245,6 +252,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 6,
           codeSuffix: 'IP_PROFILE',
+        fixHint: `Set netmask to 255.255.255.0 and gateway to the .254 address of this subnet (e.g. 172.25.X.254).`,
           message: `${cap.iedName}/${cap.apName} with IP ${cap.ip} must use netmask 255.255.255.0 and gateway ${expectedGw || '*.254'}.`,
           path,
           context: { iedName: cap.iedName, apName: cap.apName, ip: cap.ip },
@@ -262,6 +270,8 @@ export function runLandsnetChecks(
     addIssue({
       checkId: 7,
       codeSuffix: 'MMS_INDEXED_FALSE',
+        severity: 'warn',
+        fixHint: `Add indexed="true" to the ReportControl to allow multiple simultaneous client connections.`,
       message: `ReportControl '${ctrl.name}' in '${ctrl.iedName}' must have indexed=true.`,
       path: `/SCL/IED[@name='${ctrl.iedName}']//ReportControl[@name='${ctrl.name}']`,
       protocol: 'REPORT',
@@ -276,6 +286,8 @@ export function runLandsnetChecks(
       addIssue({
         checkId: 8,
         codeSuffix: 'CB_NAME',
+        severity: 'warn',
+        fixHint: `Rename the GOOSE control block to start with 'gc' (e.g. gcPtrp1, gcInd1).`,
         message: `GOOSE control block '${ctrl.name}' in '${ctrl.iedName}' must start with 'gc'.`,
         path: `/SCL/IED[@name='${ctrl.iedName}']//GSEControl[@name='${ctrl.name}']`,
         protocol: 'GOOSE',
@@ -288,6 +300,8 @@ export function runLandsnetChecks(
       addIssue({
         checkId: 8,
         codeSuffix: 'DATASET_NAME',
+        severity: 'warn',
+        fixHint: `Rename the dataset to match the control block: replace leading 'gc' with 'g' (e.g. gcPtrp1 → gPtrp1).`,
         message: `GOOSE control block '${ctrl.name}' expects dataset '${expectedDataset}', found '${ctrl.datSet}'.`,
         path: `/SCL/IED[@name='${ctrl.iedName}']//GSEControl[@name='${ctrl.name}']`,
         protocol: 'GOOSE',
@@ -321,6 +335,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 9,
           codeSuffix: 'DUP_MAC',
+        fixHint: `Assign a unique MAC address to each GOOSE control block.`,
           message: `Duplicate GOOSE MAC '${mac}' found in: ${entries.join(', ')}.`,
           path: '/SCL/Communication',
           protocol: 'GOOSE',
@@ -334,6 +349,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 9,
           codeSuffix: 'DUP_APPID',
+        fixHint: `Assign a unique APPID to each GOOSE control block.`,
           message: `Duplicate GOOSE APPID '${appid}' found in: ${entries.join(', ')}.`,
           path: '/SCL/Communication',
           protocol: 'GOOSE',
@@ -362,6 +378,7 @@ export function runLandsnetChecks(
       addIssue({
         checkId: 10,
         codeSuffix: 'MAC_STATION_MISMATCH',
+        fixHint: `The 5th byte of the GOOSE MAC must equal the 3rd octet of the IED IP in hex (e.g. IP .15. → MAC byte 0F).`,
         message: `GOOSE ${ctrl.iedName}/${ctrl.name} MAC station byte '${actual}' must equal IP 3rd octet hex '${expected}'.`,
         path: `/SCL/Communication//GSE[@cbName='${ctrl.name}']`,
         protocol: 'GOOSE',
@@ -404,6 +421,10 @@ export function runLandsnetChecks(
         codeSuffix: 'PROFILE_MISMATCH',
         message: `GOOSE ${ctrl.iedName}/${ctrl.name} profile mismatch: appid=${appid || '-'} vlan=${comm.vlanPriority || '-'} min=${comm.minTime || '-'} max=${comm.maxTime || '-'}.`,
         path: `/SCL/Communication//GSE[@cbName='${ctrl.name}']`,
+        fixHint: hasP
+          ? `P-profile GOOSE: APPID must start with 80xx, VLAN priority=7, MinTime=4 ms, MaxTime=2000 ms. Last APPID byte must match last MAC byte.`
+          : `Non-P GOOSE: APPID must start with 00xx, VLAN priority=4, MinTime=10 ms, MaxTime=10000 ms. Last APPID byte must match last MAC byte.`,
+        severity: hasP ? 'error' : 'warn',
         protocol: 'GOOSE',
         context: {
           iedName: ctrl.iedName,
@@ -432,6 +453,8 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 13,
           codeSuffix: 'MISSING_CB_GROUP',
+        severity: 'warn',
+        fixHint: `Add missing GOOSE groups to this EW0** IED: gcPtrp* (trip), gcPev* (event), gcInd* (indication).`,
           message: `IED '${ied.name}' is missing required GOOSE groups: ${missing.join(', ')}.`,
           path: `/SCL/IED[@name='${ied.name}']`,
           protocol: 'GOOSE',
@@ -450,6 +473,8 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 14,
           codeSuffix: 'MISSING_CB_GROUP',
+        severity: 'warn',
+        fixHint: `Add missing GOOSE groups to this EW8** IED: gcPtrp* (trip), gcInd* (indication).`,
           message: `IED '${ied.name}' is missing required GOOSE groups: ${missing.join(', ')}.`,
           path: `/SCL/IED[@name='${ied.name}']`,
           protocol: 'GOOSE',
@@ -487,6 +512,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 16,
           codeSuffix: 'APPID_PREFIX',
+        fixHint: `SV APPID must start with 4 (hex range 4000-4FFF). Update the APPID in the SMV communication element.`,
           message: `SV ${id} APPID '${appid}' must start with '4'.`,
           path: `/SCL/Communication//SMV[@cbName='${ctrl.name}']`,
           protocol: 'SV',
@@ -504,6 +530,7 @@ export function runLandsnetChecks(
           addIssue({
             checkId: 17,
             codeSuffix: 'MAC_STATION_MISMATCH',
+        fixHint: `The 5th byte of the SV MAC must equal the 3rd octet of the IED IP in hex.`,
             message: `SV ${id} MAC station byte '${macBytes[4]}' must equal IP 3rd octet hex '${expected}'.`,
             path: `/SCL/Communication//SMV[@cbName='${ctrl.name}']`,
             protocol: 'SV',
@@ -525,6 +552,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 18,
           codeSuffix: 'PROFILE_MISMATCH',
+        fixHint: `SV: APPID must start with 40xx, last APPID byte must match last MAC byte, VLAN priority must be 7 (P) or 4 (M).`,
           message: `SV ${id} profile mismatch: appid=${appid || '-'} mac=${comm?.mac || '-'} vlan=${comm?.vlanPriority || '-'}.`,
           path: `/SCL/Communication//SMV[@cbName='${ctrl.name}']`,
           protocol: 'SV',
@@ -539,6 +567,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 15,
           codeSuffix: 'DUP_SMVID',
+        fixHint: `Assign a unique smvID to each SampledValueControl.`,
           message: `Duplicate SV smvID '${smvId}' found in: ${entries.join(', ')}.`,
           path: '/SCL',
           protocol: 'SV',
@@ -551,6 +580,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 15,
           codeSuffix: 'DUP_MAC',
+        fixHint: `Assign a unique MAC address to each SampledValueControl.`,
           message: `Duplicate SV MAC '${mac}' found in: ${entries.join(', ')}.`,
           path: '/SCL/Communication',
           protocol: 'SV',
@@ -564,6 +594,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 15,
           codeSuffix: 'DUP_APPID',
+        fixHint: `Assign a unique APPID to each SampledValueControl.`,
           message: `Duplicate SV APPID '${appid}' found in: ${entries.join(', ')}.`,
           path: '/SCL/Communication',
           protocol: 'SV',
@@ -584,6 +615,8 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 19,
           codeSuffix: 'NO_SUBSCRIBER',
+        severity: 'warn',
+        fixHint: `Add an ExtRef in the subscribing IED pointing to this GSEControl, or confirm the subscription exists in another file.`,
           message: `GSEControl '${ctrl.name}' in '${ctrl.iedName}' has no confirmed subscribers.`,
           path: `/SCL/IED[@name='${ctrl.iedName}']//GSEControl[@name='${ctrl.name}']`,
           protocol: 'GOOSE',
@@ -604,6 +637,8 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 20,
           codeSuffix: 'NO_SUBSCRIBER',
+        severity: 'warn',
+        fixHint: `Add an ExtRef in the subscribing IED pointing to this SampledValueControl, or confirm the subscription exists in another file.`,
           message: `SampledValueControl '${ctrl.name}' in '${ctrl.iedName}' has no confirmed subscribers.`,
           path: `/SCL/IED[@name='${ctrl.iedName}']//SampledValueControl[@name='${ctrl.name}']`,
           protocol: 'SV',
@@ -615,9 +650,12 @@ export function runLandsnetChecks(
   }
 
   // IEC_003: ExtRef fully resolved — all ExtRef with iedName must resolve to a real control block
+  // serviceType values (per OpenSCD / IEC 61850-6): 'GOOSE', 'SMV', 'Report'
+  // Report ExtRefs point to ReportControl elements — they must NOT be checked against GOOSE/SV sets.
   {
     const gseKeys = new Set(model.gseControls.map((c) => `${c.iedName}:${c.name}`));
     const svKeys = new Set(model.svControls.map((c) => `${c.iedName}:${c.name}`));
+    const reportKeys = new Set(model.reportControls.map((c) => `${c.iedName}:${c.name}`));
     const iedNameSet = new Set(model.ieds.map((i) => i.name));
 
     for (const [index, extEntry] of model.extRefs.entries()) {
@@ -632,6 +670,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 21,
           codeSuffix: 'UNKNOWN_IED',
+        fixHint: `The iedName in this ExtRef does not exist in the file. Update it to match a real IED name or remove the ExtRef.`,
           message: `ExtRef in '${extEntry.ownerIed}' references unknown IED '${publisher}'.`,
           path,
           protocol: 'Generic',
@@ -641,19 +680,38 @@ export function runLandsnetChecks(
         continue;
       }
 
-      // If srcCBName given, check it resolves to a known control block
+      // If srcCBName given, check it resolves to a known control block of the correct service type
       if (ext.srcCBName) {
         const cbKey = `${publisher}:${ext.srcCBName}`;
         const service = (ext.serviceType || '').toLowerCase();
-        const isSv = service.includes('smv') || service.includes('sv');
-        const cbExists = isSv ? svKeys.has(cbKey) : gseKeys.has(cbKey) || svKeys.has(cbKey);
+
+        let cbExists: boolean;
+        let protocol: ValidationIssue['protocol'];
+
+        if (service === 'report') {
+          // Report subscriptions point to ReportControl — never check GOOSE/SV keys
+          cbExists = reportKeys.has(cbKey);
+          protocol = 'REPORT';
+        } else if (service === 'smv' || service === 'sv') {
+          cbExists = svKeys.has(cbKey);
+          protocol = 'SV';
+        } else if (service === 'goose') {
+          cbExists = gseKeys.has(cbKey);
+          protocol = 'GOOSE';
+        } else {
+          // serviceType absent or unknown — accept any matching control block type
+          cbExists = gseKeys.has(cbKey) || svKeys.has(cbKey) || reportKeys.has(cbKey);
+          protocol = 'Generic';
+        }
+
         if (!cbExists) {
           addIssue({
             checkId: 21,
             codeSuffix: 'UNKNOWN_CB',
-            message: `ExtRef in '${extEntry.ownerIed}' references unknown control block '${ext.srcCBName}' on IED '${publisher}'.`,
+        fixHint: `The srcCBName in this ExtRef does not exist on the referenced IED. Verify the control block name and serviceType are correct.`,
+            message: `ExtRef in '${extEntry.ownerIed}' references unknown control block '${ext.srcCBName}' on IED '${publisher}' (serviceType=${ext.serviceType ?? 'unset'}).`,
             path,
-            protocol: isSv ? 'SV' : 'GOOSE',
+            protocol,
             context: { iedName: extEntry.ownerIed, cbName: ext.srcCBName, ldInst: ext.ldInst },
             entityRef: { type: 'ExtRef', id: `${extEntry.ownerIed}:extref:${index}`, iedName: extEntry.ownerIed },
           });
@@ -670,6 +728,8 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 22,
           codeSuffix: 'NAMING',
+        severity: 'warn',
+        fixHint: `Rename the IED to follow the convention: [PREFIX]_[TYPE]_[ID]_EW[NNN] (e.g. NJA_D_SP1_EW811).`,
           message: `IED '${ied.name}' does not match naming convention [A-Z]{2,5}_[A-Z]_[A-Z0-9]{1,5}_EW[0-9]{3}.`,
           path: `/SCL/IED[@name='${ied.name}']`,
           context: { iedName: ied.name },
@@ -692,6 +752,8 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 23,
           codeSuffix: 'NOT_IN_SUBSTATION',
+        severity: 'warn',
+        fixHint: `Add an LNode element referencing this IED within the Substation hierarchy (Bay or VoltageLevel).`,
           message: `IED '${ied.name}' has no LNode reference in the Substation hierarchy.`,
           path: `/SCL/IED[@name='${ied.name}']`,
           context: { iedName: ied.name },
@@ -703,8 +765,10 @@ export function runLandsnetChecks(
 
   // IEC_006: DataTypeTemplates completeness — all lnType in LN/LN0 must exist in DataTypeTemplates
   {
-    const knownTypes = model.dataTypeTemplates?.lNodeTypes;
-    if (knownTypes) {
+    const dt = model.dataTypeTemplates;
+    const knownTypes = dt?.lNodeTypes;
+    if (dt && knownTypes) {
+      // IEC_006 / MISSING_LNTYPE: LN references lnType that doesn't exist in DataTypeTemplates
       for (const ied of model.ieds) {
         for (const ld of ied.lDevices) {
           const lns = [ld.ln0, ...ld.lns].filter(Boolean);
@@ -713,6 +777,7 @@ export function runLandsnetChecks(
               addIssue({
                 checkId: 24,
                 codeSuffix: 'MISSING_LNTYPE',
+        fixHint: `Add a matching LNodeType[@id] to DataTypeTemplates, or correct the lnType attribute on this LN.`,
                 message: `LN '${ln.lnClass}${ln.inst}' in '${ied.name}/${ld.inst}' references unknown lnType '${ln.lnType}'.`,
                 path: `/SCL/IED[@name='${ied.name}']//LDevice[@inst='${ld.inst}']//LN[@lnType='${ln.lnType}']`,
                 context: { iedName: ied.name, ldInst: ld.inst, lnClass: ln.lnClass },
@@ -721,6 +786,73 @@ export function runLandsnetChecks(
             }
           }
         }
+      }
+
+      // IEC_006 / MISSING_DOTYPE: DO inside LNodeType references a DOType that doesn't exist
+      for (const [lnTypeId, lnType] of dt.lNodeTypes) {
+        for (const doRef of lnType.dos) {
+          if (doRef.type && !dt.doTypes.has(doRef.type)) {
+            addIssue({
+              checkId: 24,
+              codeSuffix: 'MISSING_DOTYPE',
+        fixHint: `Add a matching DOType[@id] to DataTypeTemplates, or correct the type attribute on this DO.`,
+              message: `LNodeType '${lnTypeId}': DO '${doRef.name}' references unknown DOType '${doRef.type}'.`,
+              path: `/SCL/DataTypeTemplates/LNodeType[@id='${lnTypeId}']/DO[@name='${doRef.name}']`,
+              context: {},
+              entityRef: { type: 'Unknown', id: `lntype:${lnTypeId}` },
+            });
+          }
+        }
+      }
+
+      // IEC_006 / EMPTY_DOTYPE: DOType with no DA children — unusable by any LN
+      for (const [doTypeId, doType] of dt.doTypes) {
+        if (doType.das.length === 0) {
+          addIssue({
+            checkId: 24,
+            codeSuffix: 'EMPTY_DOTYPE',
+          severity: 'warn',
+          fixHint: 'Add DA child elements to this DOType to define its data attributes.',
+            message: `DOType '${doTypeId}' (cdc=${doType.cdc ?? '?'}) has no DA children.`,
+            path: `/SCL/DataTypeTemplates/DOType[@id='${doTypeId}']`,
+            context: {},
+            entityRef: { type: 'Unknown', id: `dotype:${doTypeId}` },
+          });
+        }
+      }
+
+      // IEC_006 / EMPTY_ENUMTYPE: DA with bType=Enum references an EnumType with no EnumVal entries
+      for (const [doTypeId, doType] of dt.doTypes) {
+        for (const da of doType.das) {
+          if (da.bType === 'Enum' && da.type) {
+            const enumType = dt.enumTypes.get(da.type);
+            if (enumType && enumType.enumValCount === 0) {
+              addIssue({
+                checkId: 24,
+                codeSuffix: 'EMPTY_ENUMTYPE',
+        severity: 'warn',
+        fixHint: `Add EnumVal entries to this EnumType — without values it cannot be used.`,
+                message: `DOType '${doTypeId}': DA '${da.name}' references EnumType '${da.type}' which has no EnumVal entries.`,
+                path: `/SCL/DataTypeTemplates/DOType[@id='${doTypeId}']/DA[@name='${da.name}']`,
+                context: {},
+                entityRef: { type: 'Unknown', id: `dotype:${doTypeId}` },
+              });
+            }
+          }
+        }
+      }
+
+      // IEC_006 / DUPLICATE_ID: duplicate id across LNodeType/DOType/DAType/EnumType
+      for (const dupId of dt.duplicateTypeIds) {
+        addIssue({
+          checkId: 24,
+          codeSuffix: 'DUPLICATE_ID',
+        fixHint: `Remove the duplicate or assign unique ids to each LNodeType/DOType/DAType/EnumType.`,
+          message: `DataTypeTemplates id '${dupId}' is defined more than once — ids must be unique.`,
+          path: `/SCL/DataTypeTemplates/*[@id='${dupId}']`,
+          context: {},
+          entityRef: { type: 'Unknown', id: `dtt:${dupId}` },
+        });
       }
     }
   }
@@ -735,6 +867,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 25,
           codeSuffix: 'DATASET_EMPTY',
+        fixHint: `Add at least one FCDA to the DataSet, or remove the control block reference.`,
           message: `DataSet '${ctrl.datSet}' referenced by SV '${ctrl.name}' in '${ctrl.iedName}' is empty.`,
           path: `/SCL/IED[@name='${ctrl.iedName}']//DataSet[@name='${ctrl.datSet}']`,
           protocol: 'SV',
@@ -750,6 +883,7 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 25,
           codeSuffix: 'DATASET_EMPTY',
+        fixHint: `Add at least one FCDA to the DataSet, or remove the control block reference.`,
           message: `DataSet '${ctrl.datSet}' referenced by GOOSE '${ctrl.name}' in '${ctrl.iedName}' is empty.`,
           path: `/SCL/IED[@name='${ctrl.iedName}']//DataSet[@name='${ctrl.datSet}']`,
           protocol: 'GOOSE',
@@ -769,6 +903,8 @@ export function runLandsnetChecks(
         addIssue({
           checkId: 26,
           codeSuffix: 'ZERO_CONFREV',
+        severity: 'warn',
+        fixHint: `Set confRev to a non-zero value (e.g. 1) to indicate the control block has been configured.`,
           message: `${proto} control block '${ctrl.name}' in '${ctrl.iedName}' has confRev=0 indicating unconfigured state.`,
           path: `/SCL/IED[@name='${ctrl.iedName}']//GSEControl[@name='${ctrl.name}']`,
           protocol: proto,
@@ -779,24 +915,6 @@ export function runLandsnetChecks(
     }
   }
 
-  // IEC_009: EW8** must have SV controls
-  {
-    const svByIed = new Set(model.svControls.map((c) => c.iedName));
-    for (const ied of model.ieds) {
-      if (!/EW8\d\d/i.test(ied.name)) continue;
-      if (!svByIed.has(ied.name)) {
-        addIssue({
-          checkId: 27,
-          codeSuffix: 'MISSING_SV',
-          message: `IED '${ied.name}' (EW8**) must have at least one SampledValueControl.`,
-          path: `/SCL/IED[@name='${ied.name}']`,
-          protocol: 'SV',
-          context: { iedName: ied.name },
-          entityRef: { type: 'IED', id: `ied:${ied.name}`, iedName: ied.name },
-        });
-      }
-    }
-  }
 
   const checks: LandsnetCheckSummary[] = CHECKS.map((check) => ({
     id: check.id,

@@ -20,6 +20,7 @@ import AddressesTable from './components/AddressesTable';
 import IedExplorer from './components/IedExplorer';
 import SubscriptionMatrix from './components/SubscriptionMatrix';
 import VersionPanel from './components/VersionPanel';
+import SubstationDiagram from './components/SubstationDiagram';
 import ThreePaneLayout from './components/ThreePaneLayout';
 import { changesCsv, detailedFlowsCsv, gooseMatrixCsv, protocolSummaryCsv, validationCsv } from './utils/exportCsv';
 import { downloadExcelIp, type ExportSheetsOption } from './utils/exportExcel';
@@ -44,7 +45,8 @@ export type AppMode =
   | 'statistics'
   | 'addresses'
   | 'ied'
-  | 'version';
+  | 'version'
+  | 'sld';
 
 export default function App(): JSX.Element {
   return (
@@ -465,6 +467,7 @@ function AppInner(): JSX.Element {
     { id: 'addresses', label: 'Addresses', icon: '⊞' },
     { id: 'ied', label: 'IED', icon: '◈' },
     { id: 'version', label: 'Version', icon: '◑' },
+    { id: 'sld', label: 'Single Line', icon: '⏚' },
   ];
 
   function handleCompareClick() {
@@ -501,7 +504,7 @@ function AppInner(): JSX.Element {
 
   // canvas tabs keep sidebars; report tabs auto-collapse them
   // Network has its own internal ThreePaneLayout so outer sidebars waste space
-  const isReportTab = appMode === 'issues' || appMode === 'compare' || appMode === 'statistics' || appMode === 'dashboard' || appMode === 'network' || appMode === 'addresses' || appMode === 'ied' || appMode === 'version';
+  const isReportTab = appMode === 'issues' || appMode === 'compare' || appMode === 'statistics' || appMode === 'dashboard' || appMode === 'network' || appMode === 'addresses' || appMode === 'ied' || appMode === 'version' || appMode === 'sld';
 
   return (
     <div className="app-shell-v2">
@@ -987,6 +990,11 @@ function AppInner(): JSX.Element {
                       fileName={compareViewFile === 'A' ? baselineName : compareViewFile === 'B' ? newName : fileName}
                       fileType={fileType}
                     />
+                  ) : null}
+
+                  {/* Single Line Diagram */}
+                  {appMode === 'sld' ? (
+                    <SubstationDiagram model={activeModel ?? null} />
                   ) : null}
                 </div>
               )}

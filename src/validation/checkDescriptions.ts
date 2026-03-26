@@ -1,0 +1,179 @@
+export interface CheckDescription {
+  summary: string;
+  detail: string;
+  example?: string;
+}
+
+export const CHECK_DESCRIPTIONS: Record<string, CheckDescription> = {
+  SCL_XSD: {
+    summary: 'XML Schema validation (IEC 61850-6 SCL)',
+    detail:
+      'Validates that the XML structure of the file conforms to the official IEC 61850-6 SCL schema (XSD). This catches syntax errors, missing attributes, invalid value ranges, and other structural deviations not permitted by the standard.',
+    example: 'E.g. if the <SCL> root element is missing a required attribute, or an element appears in the wrong order.',
+  },
+
+  LNET_001: {
+    summary: 'No duplicate IED names',
+    detail:
+      'Each IED in the file must have a unique name. If two or more IEDs share the same name, the system cannot distinguish between them and communication becomes ambiguous.',
+    example: 'E.g. if two IEDs are both named NJA_D_SP1_EW811.',
+  },
+  LNET_002: {
+    summary: 'No duplicate IP addresses within a subnetwork',
+    detail:
+      'Each Access Point (ConnectedAP) must have a unique IP address within the same SubNetwork. Duplicate IP addresses cause communication conflicts on the network.',
+    example: 'E.g. if two IEDs both have IP address 192.168.1.10 on the same SubNetwork.',
+  },
+  LNET_003: {
+    summary: 'Consistent 3rd octet of IP address per substation/subnetwork',
+    detail:
+      'Within the same substation or subnetwork, all IP addresses must share the same 3rd octet (except the 10.30.200.* exception). This ensures devices are on the same IP segment and can communicate.',
+    example: 'E.g. if some IEDs at substation NJA have 192.168.1.x while others have 192.168.2.x.',
+  },
+  LNET_004: {
+    summary: '192.168.* — subnet mask 255.255.255.0 and gateway 0.0.0.0',
+    detail:
+      'All Access Points with a 192.168.* IP address must use netmask 255.255.255.0 and gateway 0.0.0.0. This is the Landsnet standard configuration for internal networks.',
+    example: 'E.g. if a ConnectedAP with IP 192.168.1.5 uses gateway 192.168.1.1 instead of 0.0.0.0.',
+  },
+  LNET_005: {
+    summary: '10.30.* — subnet mask 255.255.255.0 and gateway 0.0.0.0',
+    detail:
+      'All Access Points with a 10.30.* IP address must use netmask 255.255.255.0 and gateway 0.0.0.0. Landsnet standard configuration for SCADA/process networks.',
+    example: 'E.g. if a ConnectedAP with IP 10.30.1.5 has an incorrect subnet mask.',
+  },
+  LNET_006: {
+    summary: '172.25.* — subnet mask 255.255.255.0 and gateway *.254',
+    detail:
+      'All Access Points with a 172.25.* IP address must use netmask 255.255.255.0 and a gateway ending in .254. This applies to WAN/routed connections.',
+    example: 'E.g. if IP is 172.25.10.5 then gateway must be 172.25.10.254.',
+  },
+  LNET_007: {
+    summary: 'All MMS reports have indexed=true',
+    detail:
+      'All ReportControl elements in the MMS service must have indexed="true". This allows multiple simultaneous report connections (buffered/unbuffered) to the same report.',
+    example: 'E.g. if <ReportControl name="rcb01" indexed="false"> is defined.',
+  },
+  LNET_008: {
+    summary: 'GOOSE naming convention for control block and dataset',
+    detail:
+      'GOOSE control block names and dataset names must follow the Landsnet naming convention. This ensures consistent and recognisable identifiers throughout the system.',
+    example: 'E.g. if a GSEControl has a name that does not start with gc or does not follow the required pattern.',
+  },
+  LNET_009: {
+    summary: 'No duplicate GOOSE MAC addresses or APPIDs',
+    detail:
+      'Each GOOSE control block must have a unique MAC address and APPID at the Ethernet layer. Duplicate values prevent IEDs from determining the source of a GOOSE packet.',
+    example: 'E.g. if two GOOSE control blocks both have APPID 0x1001 or MAC 01:0C:CD:01:00:01.',
+  },
+  LNET_010: {
+    summary: 'GOOSE MAC station byte matches 3rd octet of IP address',
+    detail:
+      'Per Landsnet standard, the station byte of the GOOSE MAC address (5th byte) must match the 3rd octet of the Access Point IP address. This ties MAC and IP identifiers to the same substation.',
+    example: 'E.g. if IP is 192.168.10.x then the GOOSE MAC 5th byte must be 0x0A (10).',
+  },
+  LNET_011: {
+    summary: 'GOOSE P-profile APPID/VLAN/MinTime/MaxTime rule',
+    detail:
+      'GOOSE control blocks using P-profile (protection) must comply with Landsnet APPID range, VLAN value, minimum time (MinTime) and maximum time (MaxTime) rules for protection messaging.',
+    example: 'E.g. if a P-profile GOOSE has MaxTime > 1000 ms or an APPID outside the permitted range.',
+  },
+  LNET_012: {
+    summary: 'GOOSE non-P-profile APPID/VLAN/MinTime/MaxTime rule',
+    detail:
+      'GOOSE control blocks that are NOT P-profile (e.g. metering, monitoring) must meet different Landsnet values for APPID range, VLAN, and timing parameters.',
+    example: 'E.g. if a non-P GOOSE uses an APPID range reserved for P-profile.',
+  },
+  LNET_013: {
+    summary: 'IED EW0** contains gcPtrp*, gcPev*, gcInd* datasets',
+    detail:
+      'IEDs whose name contains EW0** (protection and metering devices) must contain the specified GOOSE datasets: gcPtrp* (trip signals), gcPev* (power events), gcInd* (indications). This is the Landsnet minimum GOOSE output requirement.',
+    example: 'E.g. if NJA_D_SP1_EW021 has no gcPtrp* dataset.',
+  },
+  LNET_014: {
+    summary: 'IED EW8** contains gcPtrp*, gcInd* datasets',
+    detail:
+      'IEDs whose name contains EW8** (merging unit / sampler) must contain gcPtrp* and gcInd* GOOSE datasets. This ensures the MU can send protection signals and status indications.',
+    example: 'E.g. if NJA_E_SP1_EW811 is missing the gcInd* dataset.',
+  },
+  LNET_015: {
+    summary: 'No duplicate SV smvID, MAC or APPID',
+    detail:
+      'Each Sampled Values (SV) control block must have a unique smvID, MAC address and APPID. Duplicate values cause confusion in SV reception at IEDs.',
+    example: 'E.g. if two SampledValueControl blocks share the same smvID or APPID 0x4001.',
+  },
+  LNET_016: {
+    summary: 'All SV APPIDs start with 4',
+    detail:
+      'Per Landsnet standard, the APPID on Sampled Values (SV) control blocks must always start with the digit 4 (hex 0x4xxx). This separates the SV APPID range from GOOSE (0x0xxx–0x3xxx).',
+    example: 'E.g. if an SV APPID is 0x1001 instead of 0x4001.',
+  },
+  LNET_017: {
+    summary: 'SV MAC station byte matches 3rd octet of IP address',
+    detail:
+      'As with GOOSE (LNET_010), the 5th byte of the SV MAC address must match the 3rd octet of the Access Point IP address. This ties SV streams to the correct substation.',
+    example: 'E.g. if IP is 192.168.15.x then the SV MAC 5th byte must be 0x0F (15).',
+  },
+  LNET_018: {
+    summary: 'SV APPID/VLAN priority rule',
+    detail:
+      'Sampled Values control blocks must comply with Landsnet APPID range and VLAN priority settings. SV data receives special priority handling in network equipment.',
+    example: 'E.g. if SV VLAN priority is not 4 or APPID is outside the 0x4000–0x7FFF range.',
+  },
+
+  IEC_001: {
+    summary: 'GOOSE subscription fulfilment',
+    detail:
+      'Checks that all GOOSE subscriptions (ExtRef with serviceType=GOOSE) have a corresponding publisher. Every IED that subscribes to a GOOSE must receive it from an IED that is defined in the file and publishes that GOOSE.',
+    example: 'E.g. if IED A subscribes to a GOOSE from IED B but IED B is not defined in the file.',
+  },
+  IEC_002: {
+    summary: 'SV subscription fulfilment',
+    detail:
+      'Same as IEC_001 but for Sampled Values (SV). All SV subscriptions must have a corresponding SampledValueControl publisher in the file.',
+    example: 'E.g. if a merging unit is not present in the file but an IED is subscribing to SV from it.',
+  },
+  IEC_003: {
+    summary: 'ExtRef fully resolved',
+    detail:
+      'All <ExtRef> elements with an iedName attribute must point to an IED and control block that exist in the file. ' +
+      'The check respects the serviceType attribute: "GOOSE" → GSEControl, "SMV" → SampledValueControl, "Report" → ReportControl. ' +
+      'Report subscriptions (HMI/Gateway clients) are correctly validated against ReportControl elements and do not produce false positives.',
+    example: 'E.g. if an ExtRef with serviceType="GOOSE" references srcCBName="gcPtrp1" but that GSEControl is not found on the publisher IED.',
+  },
+  IEC_004: {
+    summary: 'IED naming convention',
+    detail:
+      'IED names must follow the Landsnet pattern: [A-Z]{2,5}_[A-Z]_[A-Z0-9]{1,5}_EW[0-9]{3}. This ensures consistent and recognisable identification of all IEDs in the system.',
+    example: 'E.g. NJA_D_SP1_EW811 is valid, but Relay01 or NJA-IED-001 are not.',
+  },
+  IEC_005: {
+    summary: 'IED is in the substation hierarchy',
+    detail:
+      'Each IED must be referenced by an <LNode> element somewhere in the <Substation> section. IEDs not linked to the hierarchy are unorganised and harder to trace.',
+    example: 'E.g. if an IED is defined in the <IED> section but no <LNode iedName="..."> points to it.',
+  },
+  IEC_006: {
+    summary: 'DataTypeTemplates completeness',
+    detail:
+      'Validates referential integrity and completeness of the <DataTypeTemplates> section. ' +
+      'Checks: (1) all lnType references in LN elements resolve to a known LNodeType; ' +
+      '(2) all DO type references in LNodeType resolve to a known DOType; ' +
+      '(3) DOType elements have at least one DA child; ' +
+      '(4) EnumType elements referenced by a DA have at least one EnumVal entry; ' +
+      '(5) all type ids (LNodeType, DOType, DAType, EnumType) are unique.',
+    example: 'E.g. if an LN references lnType="XCBR_Type1" but that type is not in DataTypeTemplates, or a DOType has no DA children.',
+  },
+  IEC_007: {
+    summary: 'GOOSE/SV dataset is not empty',
+    detail:
+      'All DataSet elements referenced by GOOSE or SV control blocks must contain at least one FCDA. Empty datasets are invalid and transmit no useful information.',
+    example: 'E.g. if <DataSet name="dsGOOSE1"> is empty with no <FCDA> elements.',
+  },
+  IEC_008: {
+    summary: 'confRev consistency',
+    detail:
+      'The configuration revision (confRev) on GOOSE and SV control blocks must be consistent. Mismatched confRev values between publisher and subscriber can cause IEDs to reject packets.',
+    example: 'E.g. if a GSEControl has confRev="1" but the subscriber IED expects confRev="2".',
+  },
+};

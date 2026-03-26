@@ -4008,3 +4008,72 @@ summary:focus-visible {
   border: 1px solid var(--line-strong);
   background: rgba(255,255,255,0.03);
 }
+
+/* ── SLD Canvas ──────────────────────────────────────────── */
+.sld-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #0f172a;
+  overflow: hidden;
+}
+
+.sld-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  flex-shrink: 0;
+}
+
+.sld-vl-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.sld-vl-pill {
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: monospace;
+  opacity: 0.35;
+  transition: opacity 0.15s;
+}
+
+.sld-vl-pill.active {
+  opacity: 1;
+  background: rgba(255,255,255,0.06);
+}
+
+.sld-canvas-wrap {
+  flex: 1;
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+}
+
+.sld-canvas-wrap.panning {
+  cursor: grabbing;
+}
+
+.sld-vl-label {
+  font-size: 11px;
+  font-family: monospace;
+  font-weight: 600;
+}
+
+.sld-bay-label {
+  font-size: 9px;
+  font-family: monospace;
+}
+
+.sld-ied-chip text {
+  pointer-events: none;
+}
