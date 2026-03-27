@@ -1,6 +1,8 @@
 # IEC 61850 SCD Visualizer
 
-A local-first web application for parsing, validating, and visualizing IEC 61850 SCL/SCD configuration files. All processing happens in the browser — no server required.
+**Live app:** https://gridtech-is.github.io/scd-visualizer/
+
+A local-first web application for parsing, validating, and visualizing IEC 61850 SCL/SCD configuration files. All processing happens in the browser — no server required. Works offline and can be installed as a desktop app (PWA).
 
 Also includes a standalone **Python CLI** for validation and CSV/Excel export.
 
