@@ -1,5 +1,5 @@
 {
-  "name": "iec61850-scl-visualizer",
+  "name": "scd-visualizer-v2",
   "private": true,
   "version": "0.1.0",
   "type": "module",

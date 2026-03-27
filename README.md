@@ -1,4 +1,4 @@
-# IEC 61850 SCD Visualizer
+# SCD Visualizer V2
 
 **Live app:** https://gridtech-is.github.io/scd-visualizer/
 

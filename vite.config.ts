@@ -10,8 +10,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon-512.png', 'icon-192.png'],
       manifest: {
-        name: 'IEC 61850 SCD Visualizer',
-        short_name: 'SCD Visualizer',
+        name: 'SCD Visualizer V2',
+        short_name: 'SCD Visualizer V2',
         description: 'Parse, validate and visualize IEC 61850 SCD/SCL files',
         theme_color: '#0f172a',
         background_color: '#0f172a',
