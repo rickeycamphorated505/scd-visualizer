@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Badge } from './ui';
 
-type ViewMode = 'dashboard' | 'visualizer' | 'network' | 'issues' | 'compare' | 'statistics' | 'addresses' | 'ied' | 'version';
+type ViewMode = 'dashboard' | 'visualizer' | 'network' | 'issues' | 'compare' | 'statistics' | 'addresses' | 'ied' | 'version' | 'sld';
 
 interface TopBarProps {
   fileName: string;

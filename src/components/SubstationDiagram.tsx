@@ -3,13 +3,11 @@ import type { SclModel } from '../model/types';
 import type { EquipmentKind } from '../sld/types';
 import {
   computeLayout,
-  BAY_WIDTH,
   IED_CHIP_HEIGHT,
   IED_CHIP_GAP,
   LEFT_MARGIN,
   SYMBOL_HEIGHT,
   SYMBOL_SIZE,
-  VL_HEADER_HEIGHT,
 } from '../sld/layout';
 import type { LayoutVoltageLevel, LayoutBay, LayoutEquipment } from '../sld/layout';
 import { getSymbol } from '../sld/symbols';
