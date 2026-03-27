@@ -4,24 +4,27 @@ import { buildIssueId } from '../utils';
 import type { LandsnetCheckSummary, LandsnetDictionaries } from './types';
 
 export const enum CheckCode {
-  LNET_001 = 'LNET_001',
-  LNET_002 = 'LNET_002',
+  // IEC 61850 general rules (reclassified from LNET)
+  IEC_009 = 'IEC_009',
+  IEC_010 = 'IEC_010',
+  IEC_011 = 'IEC_011',
+  IEC_012 = 'IEC_012',
+  // Landsnet-specific rules
   LNET_003 = 'LNET_003',
   LNET_004 = 'LNET_004',
   LNET_005 = 'LNET_005',
   LNET_006 = 'LNET_006',
   LNET_007 = 'LNET_007',
   LNET_008 = 'LNET_008',
-  LNET_009 = 'LNET_009',
   LNET_010 = 'LNET_010',
   LNET_011 = 'LNET_011',
   LNET_012 = 'LNET_012',
   LNET_013 = 'LNET_013',
   LNET_014 = 'LNET_014',
-  LNET_015 = 'LNET_015',
   LNET_016 = 'LNET_016',
   LNET_017 = 'LNET_017',
   LNET_018 = 'LNET_018',
+  // General IEC 61850 rules
   IEC_001 = 'IEC_001',
   IEC_002 = 'IEC_002',
   IEC_003 = 'IEC_003',
@@ -48,24 +51,27 @@ interface CapRecord {
 }
 
 const CHECKS: CheckInfo[] = [
-  { id: 1, code: CheckCode.LNET_001, title: 'No duplicate IED names' },
-  { id: 2, code: CheckCode.LNET_002, title: 'No duplicate IP addresses in each subnet' },
-  { id: 3, code: CheckCode.LNET_003, title: 'Consistent 3rd IP octet per station/subnetwork (except 10.30.200.*)' },
-  { id: 4, code: CheckCode.LNET_004, title: '192.168.* uses mask 255.255.255.0 and gateway 0.0.0.0' },
-  { id: 5, code: CheckCode.LNET_005, title: '10.30.* uses mask 255.255.255.0 and gateway 0.0.0.0' },
-  { id: 6, code: CheckCode.LNET_006, title: '172.25.* uses mask 255.255.255.0 and gateway *.254' },
-  { id: 7, code: CheckCode.LNET_007, title: 'All MMS reports have indexed=true' },
-  { id: 8, code: CheckCode.LNET_008, title: 'GOOSE naming convention for control block and dataset' },
-  { id: 9, code: CheckCode.LNET_009, title: 'No duplicate GOOSE MAC or APPID' },
+  // IEC general rules (reclassified)
+  { id: 1,  code: CheckCode.IEC_009, title: 'No duplicate IED names' },
+  { id: 2,  code: CheckCode.IEC_010, title: 'No duplicate IP addresses in each subnet' },
+  { id: 9,  code: CheckCode.IEC_011, title: 'No duplicate GOOSE MAC or APPID' },
+  { id: 15, code: CheckCode.IEC_012, title: 'No duplicate SV smvID, MAC, APPID' },
+  // Landsnet-specific rules
+  { id: 3,  code: CheckCode.LNET_003, title: 'Consistent 3rd IP octet per station/subnetwork (except 10.30.200.*)' },
+  { id: 4,  code: CheckCode.LNET_004, title: '192.168.* uses mask 255.255.255.0 and gateway 0.0.0.0' },
+  { id: 5,  code: CheckCode.LNET_005, title: '10.30.* uses mask 255.255.255.0 and gateway 0.0.0.0' },
+  { id: 6,  code: CheckCode.LNET_006, title: '172.25.* uses mask 255.255.255.0 and gateway *.254' },
+  { id: 7,  code: CheckCode.LNET_007, title: 'All MMS reports have indexed=true' },
+  { id: 8,  code: CheckCode.LNET_008, title: 'GOOSE naming convention for control block and dataset' },
   { id: 10, code: CheckCode.LNET_010, title: 'GOOSE MAC station byte matches IP 3rd octet' },
   { id: 11, code: CheckCode.LNET_011, title: 'GOOSE P-profile APPID/VLAN/MinTime/MaxTime rule' },
   { id: 12, code: CheckCode.LNET_012, title: 'GOOSE non-P profile APPID/VLAN/MinTime/MaxTime rule' },
   { id: 13, code: CheckCode.LNET_013, title: 'IED EW0** includes gcPtrp*, gcPev*, gcInd*' },
   { id: 14, code: CheckCode.LNET_014, title: 'IED EW8** includes gcPtrp*, gcInd*' },
-  { id: 15, code: CheckCode.LNET_015, title: 'No duplicate SV smvID, MAC, APPID' },
   { id: 16, code: CheckCode.LNET_016, title: 'All SV APPID starts with 4' },
   { id: 17, code: CheckCode.LNET_017, title: 'SV MAC station byte matches IP 3rd octet' },
   { id: 18, code: CheckCode.LNET_018, title: 'SV APPID/VLAN priority profile rule' },
+  // General IEC 61850 rules
   { id: 19, code: CheckCode.IEC_001, title: 'GOOSE subscription completeness' },
   { id: 20, code: CheckCode.IEC_002, title: 'SV subscription completeness' },
   { id: 21, code: CheckCode.IEC_003, title: 'ExtRef fully resolved' },

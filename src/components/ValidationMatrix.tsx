@@ -15,6 +15,8 @@ interface ValidationMatrixProps {
   onSelectIed: (iedName: string) => void;
   waivedChecks: Set<string>;
   onToggleWaive: (code: string) => void;
+  landsnetEnabled: boolean;
+  onToggleLandsnet: () => void;
   onDrillDown: (query: string) => void;
 }
 
@@ -26,6 +28,8 @@ export default function ValidationMatrix({
   onSelectIed,
   waivedChecks,
   onToggleWaive,
+  landsnetEnabled,
+  onToggleLandsnet,
   onDrillDown,
 }: ValidationMatrixProps): JSX.Element {
   const iedNames = useMemo(
@@ -161,6 +165,16 @@ export default function ValidationMatrix({
       document.body,
     )}
     <div className="validation-matrix-wrap">
+      <div className="vm-toolbar">
+        <button
+          className={`vm-landsnet-toggle ${landsnetEnabled ? 'vm-landsnet-on' : 'vm-landsnet-off'}`}
+          onClick={onToggleLandsnet}
+          title={landsnetEnabled ? 'Landsnet rules enabled — click to disable' : 'Landsnet rules disabled — click to enable'}
+        >
+          <span className="vm-landsnet-dot" />
+          Landsnet rules
+        </button>
+      </div>
       <div className="validation-matrix-scroll">
         <table className="validation-matrix-table">
           <thead>
@@ -189,7 +203,7 @@ export default function ValidationMatrix({
             </tr>
           </thead>
           <tbody>
-            {checks.map((check) => {
+            {checks.filter((check) => landsnetEnabled || !check.code.startsWith('LNET_')).map((check) => {
               const checkMap = cellData.get(check.code);
               // Issues with no IED attribution at all (stored under __global__)
               const unattributedCount = checkMap?.get('__global__') ?? 0;

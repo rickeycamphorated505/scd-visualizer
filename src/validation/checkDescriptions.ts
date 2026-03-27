@@ -12,13 +12,13 @@ export const CHECK_DESCRIPTIONS: Record<string, CheckDescription> = {
     example: 'E.g. if the <SCL> root element is missing a required attribute, or an element appears in the wrong order.',
   },
 
-  LNET_001: {
+  IEC_009: {
     summary: 'No duplicate IED names',
     detail:
       'Each IED in the file must have a unique name. If two or more IEDs share the same name, the system cannot distinguish between them and communication becomes ambiguous.',
     example: 'E.g. if two IEDs are both named NJA_D_SP1_EW811.',
   },
-  LNET_002: {
+  IEC_010: {
     summary: 'No duplicate IP addresses within a subnetwork',
     detail:
       'Each Access Point (ConnectedAP) must have a unique IP address within the same SubNetwork. Duplicate IP addresses cause communication conflicts on the network.',
@@ -60,7 +60,7 @@ export const CHECK_DESCRIPTIONS: Record<string, CheckDescription> = {
       'GOOSE control block names and dataset names must follow the Landsnet naming convention. This ensures consistent and recognisable identifiers throughout the system.',
     example: 'E.g. if a GSEControl has a name that does not start with gc or does not follow the required pattern.',
   },
-  LNET_009: {
+  IEC_011: {
     summary: 'No duplicate GOOSE MAC addresses or APPIDs',
     detail:
       'Each GOOSE control block must have a unique MAC address and APPID at the Ethernet layer. Duplicate values prevent IEDs from determining the source of a GOOSE packet.',
@@ -96,7 +96,7 @@ export const CHECK_DESCRIPTIONS: Record<string, CheckDescription> = {
       'IEDs whose name contains EW8** (merging unit / sampler) must contain gcPtrp* and gcInd* GOOSE datasets. This ensures the MU can send protection signals and status indications.',
     example: 'E.g. if NJA_E_SP1_EW811 is missing the gcInd* dataset.',
   },
-  LNET_015: {
+  IEC_012: {
     summary: 'No duplicate SV smvID, MAC or APPID',
     detail:
       'Each Sampled Values (SV) control block must have a unique smvID, MAC address and APPID. Duplicate values cause confusion in SV reception at IEDs.',

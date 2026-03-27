@@ -92,6 +92,23 @@ function AppInner(): JSX.Element {
     });
   }
 
+  const [landsnetEnabled, setLandsnetEnabled] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('vm-landsnet-enabled');
+      return stored === null ? true : stored === 'true';
+    } catch {
+      return true;
+    }
+  });
+
+  function toggleLandsnet() {
+    setLandsnetEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem('vm-landsnet-enabled', String(next));
+      return next;
+    });
+  }
+
   // Compare flow state
   const [assignDialog, setAssignDialog] = useState<{ fileName: string } | null>(null);
   const [pendingCompareSlot, setPendingCompareSlot] = useState<'A' | 'B' | null>(null);
@@ -168,13 +185,13 @@ function AppInner(): JSX.Element {
   }, [activeModel, visibleBase]);
 
   const filteredIssues = useMemo(() => {
-    if (waivedChecks.size === 0) return vstate.issues;
     return vstate.issues.filter((i) => {
       const parts = i.code.split('_');
       const baseCode = parts.length >= 2 ? `${parts[0]}_${parts[1]}` : i.code;
+      if (!landsnetEnabled && baseCode.startsWith('LNET_')) return false;
       return !waivedChecks.has(baseCode);
     });
-  }, [vstate.issues, waivedChecks]);
+  }, [vstate.issues, waivedChecks, landsnetEnabled]);
   const stableIssues = filteredIssues;
 
   const [pendingLastSession, setPendingLastSession] = useState<{ fileName: string; ieds: number; ts: number } | null>(null);
@@ -882,6 +899,8 @@ function AppInner(): JSX.Element {
                           onSelectIed={selectIed}
                           waivedChecks={waivedChecks}
                           onToggleWaive={toggleWaive}
+                          landsnetEnabled={landsnetEnabled}
+                          onToggleLandsnet={toggleLandsnet}
                           onDrillDown={(code) => {
                             vdispatch({ type: 'set-filter', payload: { query: code } });
                             vdispatch({ type: 'set-validation-sub-view', payload: 'list' });
