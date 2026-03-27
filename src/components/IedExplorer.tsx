@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import type {
-  SclModel, IedModel, LDeviceModel, DataSetModel,
+  SclModel, IedModel, LDeviceModel, LnModel, DataSetModel,
   GooseControlModel, SvControlModel, ReportControlModel, FcdaModel,
+  DataTypeTemplatesModel,
 } from '../model/types';
 
 interface IedExplorerProps {
@@ -123,6 +124,7 @@ function IedTree({ ied, model }: { ied: IedModel; model: SclModel }): JSX.Elemen
             goose={goose.filter((g) => g.ldInst === ld.inst)}
             sv={sv.filter((s) => s.ldInst === ld.inst)}
             reports={reports.filter((r) => r.ldInst === ld.inst)}
+            dtt={model.dataTypeTemplates ?? { lNodeTypes: new Map(), doTypes: new Map(), daTypes: new Map(), enumTypes: new Map(), duplicateTypeIds: [] }}
             isOpen={isOpen}
             onToggle={toggle}
             depth={1}
@@ -136,7 +138,7 @@ function IedTree({ ied, model }: { ied: IedModel; model: SclModel }): JSX.Elemen
 /* ── LDevice node ──────────────────────────────────────────────────── */
 
 function LDeviceNode({
-  ied, ld, datasets, goose, sv, reports, isOpen, onToggle, depth,
+  ied, ld, datasets, goose, sv, reports, dtt, isOpen, onToggle, depth,
 }: {
   ied: IedModel;
   ld: LDeviceModel;
@@ -144,6 +146,7 @@ function LDeviceNode({
   goose: GooseControlModel[];
   sv: SvControlModel[];
   reports: ReportControlModel[];
+  dtt: DataTypeTemplatesModel;
   isOpen: (key: string) => boolean;
   onToggle: (key: string) => void;
   depth: number;
@@ -272,12 +275,123 @@ function LDeviceNode({
 
       {/* Other LNs */}
       {ld.lns.map((ln) => (
-        <LeafNode
+        <LnNode
           key={`${ln.lnClass}${ln.inst}`}
-          icon="◈"
-          iconClass={`ied-tree-icon-ln ied-tree-ln-${getLnGroup(ln.lnClass)}`}
-          label={`${ln.prefix ?? ''}${ln.lnClass}${ln.inst}`}
-          sublabel={ln.lnType}
+          nodeKey={`ln:${ied.name}:${ld.inst}:${ln.prefix ?? ''}${ln.lnClass}${ln.inst}`}
+          ln={ln}
+          dtt={dtt}
+          isOpen={isOpen}
+          onToggle={onToggle}
+          depth={depth + 1}
+        />
+      ))}
+    </TreeNode>
+  );
+}
+
+/* ── LN node (with DO/DA from DataTypeTemplates) ─────────────────── */
+
+function LnNode({
+  nodeKey, ln, dtt, isOpen, onToggle, depth,
+}: {
+  nodeKey: string;
+  ln: LnModel;
+  dtt: DataTypeTemplatesModel;
+  isOpen: (key: string) => boolean;
+  onToggle: (key: string) => void;
+  depth: number;
+}): JSX.Element {
+  const label = `${ln.prefix ?? ''}${ln.lnClass}${ln.inst}`;
+  const lnTypeDef = ln.lnType ? dtt.lNodeTypes.get(ln.lnType) : undefined;
+  const dos = lnTypeDef?.dos ?? [];
+
+  if (dos.length === 0) {
+    return (
+      <LeafNode
+        icon="◈"
+        iconClass={`ied-tree-icon-ln ied-tree-ln-${getLnGroup(ln.lnClass)}`}
+        label={label}
+        sublabel={ln.lnType}
+        depth={depth}
+      />
+    );
+  }
+
+  return (
+    <TreeNode
+      nodeKey={nodeKey}
+      icon="◈"
+      iconClass={`ied-tree-icon-ln ied-tree-ln-${getLnGroup(ln.lnClass)}`}
+      label={label}
+      sublabel={ln.lnType}
+      isOpen={isOpen(nodeKey)}
+      onToggle={onToggle}
+      depth={depth}
+    >
+      {dos.map((doEntry) => (
+        <DoNode
+          key={doEntry.name}
+          nodeKey={`${nodeKey}:do:${doEntry.name}`}
+          doName={doEntry.name}
+          doType={doEntry.type}
+          dtt={dtt}
+          isOpen={isOpen}
+          onToggle={onToggle}
+          depth={depth + 1}
+        />
+      ))}
+    </TreeNode>
+  );
+}
+
+/* ── DO node ──────────────────────────────────────────────────────── */
+
+function DoNode({
+  nodeKey, doName, doType, dtt, isOpen, onToggle, depth,
+}: {
+  nodeKey: string;
+  doName: string;
+  doType: string;
+  dtt: DataTypeTemplatesModel;
+  isOpen: (key: string) => boolean;
+  onToggle: (key: string) => void;
+  depth: number;
+}): JSX.Element {
+  const doTypeDef = dtt.doTypes.get(doType);
+  const das = doTypeDef?.das ?? [];
+  const cdc = doTypeDef?.cdc;
+
+  if (das.length === 0) {
+    return (
+      <LeafNode
+        icon="◇"
+        iconClass="ied-tree-icon-do"
+        label={doName}
+        sublabel={cdc}
+        depth={depth}
+      />
+    );
+  }
+
+  return (
+    <TreeNode
+      nodeKey={nodeKey}
+      icon="◇"
+      iconClass="ied-tree-icon-do"
+      label={doName}
+      sublabel={cdc}
+      isOpen={isOpen(nodeKey)}
+      onToggle={onToggle}
+      depth={depth}
+    >
+      {das.map((da) => (
+        <LeafNode
+          key={da.name}
+          icon="·"
+          iconClass="ied-tree-icon-da"
+          label={da.name}
+          sublabel={da.bType ?? da.type}
+          tag={da.fc}
           depth={depth + 1}
         />
       ))}

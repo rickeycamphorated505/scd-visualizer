@@ -3354,6 +3354,8 @@ summary:focus-visible {
 .ied-tree-icon-sv    { color: var(--sv, #f97316); }
 .ied-tree-icon-rpt   { color: var(--mms, #3b82f6); }
 .ied-tree-icon-fcda  { color: var(--muted); }
+.ied-tree-icon-do    { color: #7dd3fc; }
+.ied-tree-icon-da    { color: var(--muted); }
 .ied-tree-icon-ln    { color: #94a3b8; }
 
 /* LN group colours */
